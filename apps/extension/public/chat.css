@@ -1,19 +1,18 @@
-:root{--paper:#fff;--ink:#252725;--muted:#7c807b;--line:#eceee9}header{padding:14px 18px;gap:6px;border-bottom:0}.brand{margin-right:auto}.brand small{display:none}.mark{width:27px;height:27px;font-size:25px}h1{font-size:19px}header button{font-size:11px;border:0}#settings-toggle{order:3;font-size:18px}.chat{padding:24px 22px}.message{font-size:14px;line-height:1.7;margin-bottom:30px}.assistant{white-space:normal}.assistant:before,.user:before{display:none}.user{margin-left:35px;background:#f1f2ef;border-radius:18px;padding:11px 15px;white-space:pre-wrap}.message p{margin:0 0 12px}.message p:last-child{margin-bottom:0}.message h3,.message h4,.message h5{font:600 16px/1.4 'Avenir Next','Segoe UI',sans-serif;letter-spacing:0;margin:20px 0 9px}.message ul,.message ol{padding-left:23px;margin:10px 0 16px}.message li{margin:5px 0}.message a{color:var(--green);text-underline-offset:3px}.message code{font:12px/1.6 ui-monospace,monospace;background:#eff1ed;padding:2px 5px;border-radius:4px}.message pre{max-height:350px;overflow:auto;background:#f6f7f4;padding:14px;border:1px solid var(--line);border-radius:10px;white-space:pre;margin:12px 0}.message pre code{padding:0;background:none}.message blockquote{margin:12px 0;border-left:3px solid #d8ded4;padding-left:13px;color:#646c61}#welcome{padding-top:45px}#welcome .eyebrow{display:none}#welcome h2{font-size:32px}#welcome button{border:0;background:#f6f7f4}.composer-bottom>span{display:none}.composer-bottom{justify-content:flex-end}.composer{border:0;background:#f4f5f2;border-radius:21px}footer{border-top:0;padding:10px 15px 13px}.activity,#activity-detail{display:none}body[data-busy=true] .activity{display:flex}body[data-busy=true] #activity-detail{display:block}.composer textarea{font-size:13px;min-height:65px}#history{padding:12px 18px;background:#f7f8f5;max-height:45vh;overflow:auto;border-bottom:1px solid var(--line)}#history button{display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;border:0;margin:4px 0;font-size:12px}#history button[aria-current=true]{background:#e8ede4}#settings{background:#f7f8f5}textarea:focus-visible{outline:2px solid #729582;outline-offset:-2px}
+:root{--paper:#fff;--ink:#252725;--muted:#7c807b;--line:#eceee9}header{padding:14px 18px;gap:6px;border-bottom:0}.brand{margin-right:auto}.brand small{display:none}.mark{width:27px;height:27px;font-size:25px}h1{font-size:19px}header button{font-size:11px;border:0}#settings-toggle{order:3;font-size:18px}.chat{padding:24px 22px}.message{font-size:14px;line-height:1.7;margin-bottom:30px}.assistant{white-space:normal}.assistant:before,.user:before{display:none}.user{margin-left:35px;background:#f1f2ef;border-radius:18px;padding:11px 15px;white-space:pre-wrap}.message p{margin:0 0 12px}.message p:last-child{margin-bottom:0}.message h3,.message h4,.message h5{font:600 16px/1.4 'Avenir Next','Segoe UI',sans-serif;letter-spacing:0;margin:20px 0 9px}.message ul,.message ol{padding-left:23px;margin:10px 0 16px}.message li{margin:5px 0}.message a{color:var(--green);text-underline-offset:3px}.message code{font:12px/1.6 ui-monospace,monospace;background:var(--soft);padding:2px 5px;border-radius:4px}.message pre{max-height:350px;overflow:auto;background:var(--soft);padding:14px;border:1px solid var(--line);border-radius:10px;white-space:pre;margin:12px 0}.message pre code{padding:0;background:none}.message blockquote{margin:12px 0;border-left:3px solid #d8ded4;padding-left:13px;color:#646c61}#welcome{padding-top:45px}#welcome .eyebrow{display:none}#welcome h2{font-size:32px}#welcome button{border:0;background:var(--soft)}.composer-bottom>span{display:none}.composer-bottom{justify-content:flex-end}.composer{border:0;background:#f4f5f2;border-radius:21px}footer{border-top:0;padding:10px 15px 13px}.activity,#activity-detail{display:none}body[data-busy=true] .activity{display:flex}body[data-busy=true] #activity-detail{display:block}.composer textarea{font-size:13px;min-height:65px}#history{padding:12px 18px;background:#f7f8f5;max-height:45vh;overflow:auto;border-bottom:1px solid var(--line)}#history button{display:block;width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:left;border:0;margin:4px 0;font-size:12px}#history button[aria-current=true]{background:#e8ede4}#settings{background:#f7f8f5}textarea:focus-visible{outline:2px solid #729582;outline-offset:-2px}
 :root { --system-font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 /* Keep every surface on the user's system font, including Markdown and controls. */
 body, body *, body *::before, body *::after {
   font-family: var(--system-font) !important;
 }
 :root {
-  color-scheme: light;
+  color-scheme: light dark;
 }
-body {
+:root {
   --paper: #fcfcfc;
   --ink: #252725;
   --muted: #7c807b;
   --line: #eceee9;
   --green: #285b47;
-  background: #fcfcfc;
 }
 body .composer, body textarea, body input, body select {
   background: #ffffff;
@@ -76,7 +75,88 @@ body .composer textarea:focus-visible {
 .thinking-content p{margin:6px 0}
 .message.assistant table,.thinking-content table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:12px 0;font-size:12px}
 .message.assistant th,.message.assistant td,.thinking-content th,.thinking-content td{padding:8px 10px;border:1px solid #e5e5e5;text-align:left;vertical-align:top}
-.message.assistant th,.thinking-content th{background:#f5f5f5;font-weight:600}
-.message.assistant pre,.thinking-content pre{overflow-x:auto;white-space:pre;max-width:100%;padding:12px;border:1px solid #e8e8e8;border-radius:10px;background:#f5f5f5}
+.message.assistant th,.thinking-content th{background:var(--soft);font-weight:600}
+.message.assistant pre,.thinking-content pre{overflow-x:auto;white-space:pre;max-width:100%;padding:12px;border:1px solid #e8e8e8;border-radius:10px;background:var(--soft)}
 .message.assistant li>p{margin:4px 0}
 .message.assistant blockquote{margin:10px 0;padding-left:12px;border-left:3px solid #d8d8d8;color:#676767}
+
+/* Roomy history dropdown above the conversation, without shifting chat content. */
+header { position: relative; z-index: 3; }
+#history-toggle { padding: 8px 12px; border: 1px solid #e7e7e7; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+#history-toggle[aria-expanded=true] { background: #f1f2ef; }
+#history { position: absolute; top: calc(100% - 2px); left: 12px; right: 12px; z-index: 10; display: flex; flex-direction: column; max-height: min(560px, 72dvh); padding: 18px; background: #fff; border: 1px solid #e5e7e2; border-radius: 18px; box-shadow: 0 16px 48px #17201920; overflow: hidden; }
+.history-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.history-heading strong { font-size: 16px; font-weight: 600; }
+#history input { flex-shrink: 0; width: 100%; margin: 0 0 12px; padding: 11px 13px; border: 1px solid #e4e6e0; border-radius: 10px; background: #f7f8f5; font-size: 13px; }
+.history-list { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+#history .history-entry { display: block; width: 100%; padding: 13px 12px; margin: 2px 0; text-align: left; border-radius: 11px; white-space: normal; }
+#history .history-entry:hover { background: #f5f6f2; }
+#history .history-entry[aria-current=true] { background: #eaf0e7; box-shadow: inset 3px 0 #527b5c; }
+.history-entry-title { display: block; font-size: 13px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.history-entry-preview { display: block; margin-top: 4px; color: #7c807b; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history-note { flex-shrink: 0; margin: 12px 0 0; padding-top: 10px; border-top: 1px solid #eceee9; }
+.history-empty { padding: 24px 10px; margin: 0; color: #7c807b; font-size: 13px; text-align: center; }
+
+/* Shared palette for every panel surface; follows browser/system appearance. */
+:root {
+  --surface: #ffffff;
+  --soft: #f5f6f3;
+  --bubble: #f1f2ef;
+  --hover: #edf0e8;
+  --selected: #eaf0e7;
+  --focus: #527b5c;
+  --danger: #a03b2f;
+  --action: #171917;
+  --on-action: #ffffff;
+  --shadow: #17201920;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #191b1a;
+    --surface: #222523;
+    --soft: #282c29;
+    --bubble: #303632;
+    --ink: #e8ece8;
+    --muted: #a9b3ac;
+    --line: #3c443e;
+    --green: #a0d6b2;
+    --hover: #343d36;
+    --selected: #304538;
+    --focus: #9bccaa;
+    --danger: #ffaaa0;
+    --action: #e0eae2;
+    --on-action: #1c251f;
+    --shadow: #00000060;
+  }
+}
+body, footer { background: var(--paper); color: var(--ink); }
+body .user { background: var(--bubble); color: var(--ink); }
+body .user.error, body .error, body #stop { color: var(--danger); }
+body .composer, body textarea, body input, body select {
+  background: var(--surface); color: var(--ink); border-color: var(--line);
+}
+body .composer { box-shadow: 0 3px 16px var(--shadow); }
+body .composer textarea { background: transparent; }
+input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
+body button:hover { background: var(--hover); }
+body #send, body #approve { background: var(--action); color: var(--on-action); }
+body #send:hover, body #approve:hover { background: var(--green); color: var(--on-action); }
+body #settings, body #welcome button, body .thinking-box { background: var(--soft); color: var(--ink); border-color: var(--line); }
+body #history { background: var(--surface); border-color: var(--line); box-shadow: 0 16px 48px var(--shadow); }
+body #history input { background: var(--soft); color: var(--ink); border-color: var(--line); }
+body #history-toggle { border-color: var(--line); }
+body #history-toggle[aria-expanded=true], body #history .history-entry:hover { background: var(--hover); }
+body #history .history-entry[aria-current=true] { background: var(--soft); box-shadow: none; }
+body .history-entry-preview, body .history-empty, body .thinking-box, body .message blockquote, body .message.assistant blockquote { color: var(--muted); }
+body .history-note, body .message blockquote, body .message.assistant blockquote { border-color: var(--line); }
+body .message code, body .thinking-content code { background: var(--soft); color: var(--ink); }
+body .message pre, body .message.assistant pre, body .thinking-content pre, body .message.assistant th, body .thinking-content th { background: var(--soft); color: var(--ink); border-color: var(--line); }
+body .message pre code, body .thinking-content pre code { background: transparent; }
+body .message.assistant td, body .message.assistant th, body .thinking-content td, body .thinking-content th { border-color: var(--line); }
+body dialog { background: var(--surface); color: var(--ink); border-color: var(--line); box-shadow: 0 20px 80px var(--shadow); }
+dialog::backdrop { background: #101b1470; }
+body button:focus-visible, body summary:focus-visible, body input:focus-visible, body select:focus-visible, body textarea:focus-visible { outline-color: var(--focus); }
+body .composer:focus-within { border-color: var(--focus); outline-color: var(--focus); }
+body .dot { background: var(--muted); }
+body[data-busy=true] .dot { background: var(--green); }
+::selection { background: var(--selected); color: var(--ink); }

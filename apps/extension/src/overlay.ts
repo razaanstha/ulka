@@ -26,6 +26,13 @@ chromeApi.runtime.onMessage.addListener(raw => {
     button{font:500 12px system-ui,sans-serif;border:1px solid #e1e2e5;background:#fff;color:#36383c;border-radius:12px;padding:9px 12px;cursor:pointer;white-space:nowrap}
     button:hover{background:#f0f0f2}button:last-child{background:#171819;color:white;border-color:#171819}button:last-child:hover{background:#353639}button:disabled{opacity:.5;cursor:wait}button:focus-visible{outline:2px solid #555;outline-offset:3px}
     @media(max-width:500px){.card{right:12px;bottom:12px;gap:8px}.orb{display:none}.detail{max-width:120px}button{padding:9px}}
+    @media(prefers-color-scheme:dark){
+      .card{color-scheme:dark;background:#222523;color:#e8ece8;border-color:#3c443e;box-shadow:0 8px 32px #0006}
+      .detail{color:#a9b3ac}.orb{border-color:#3c443e;border-top-color:#a0d6b2}
+      button{background:#303632;color:#e8ece8;border-color:#4a554c}button:hover{background:#3b473e}
+      button:last-child{background:#e0eae2;color:#1c251f;border-color:#e0eae2}button:last-child:hover{background:#a0d6b2}
+      button:focus-visible{outline-color:#9bccaa}
+    }
     @media(prefers-reduced-motion:reduce){.orb,.edges{animation:none}}
   </style><div class="edges" aria-hidden="true"></div><section class="card" aria-label="Ulka browser control"><span class="orb" aria-hidden="true"></span><div class="copy"><div class="title">Agent in progress</div><div class="detail" role="status">Working in your browser</div></div><div class="actions"><button data-action="stop" title="Cancel this task">Stop</button><button data-action="takeover" title="Cancel and return browser control to you">Take over ↗</button></div></section>`;
   statusText = root.querySelector('[role=status]');

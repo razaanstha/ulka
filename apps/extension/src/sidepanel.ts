@@ -20,21 +20,69 @@ let thinking: HTMLDetailsElement | undefined;
 let thinkingBody: HTMLElement | undefined;
 let thinkingText = '';
 let saveQueue = Promise.resolve();
+// Large searchable history dropdown, keeping the existing local chat storage.
+const header = document.querySelector('header')!;
 const historyPanel = document.createElement('section'); historyPanel.id = 'history'; historyPanel.hidden = true;
-document.querySelector('header')!.after(historyPanel);
-const historyButton = document.createElement('button'); historyButton.textContent = 'Chats'; historyButton.setAttribute('aria-label', 'Chat history');
+historyPanel.setAttribute('aria-label', 'Previous chats');
+const historyButton = document.createElement('button'); historyButton.id = 'history-toggle'; historyButton.textContent = 'Chats ▾'; historyButton.setAttribute('aria-label', 'Open previous chats');
+historyButton.setAttribute('aria-controls', 'history'); historyButton.setAttribute('aria-expanded', 'false');
 const newButton = document.createElement('button'); newButton.textContent = '+'; newButton.setAttribute('aria-label', 'New chat');
-document.querySelector('header')!.append(historyButton, newButton);
-historyButton.setAttribute('aria-expanded', 'false');
-historyButton.addEventListener('click', () => { historyPanel.hidden = !historyPanel.hidden; historyButton.setAttribute('aria-expanded', String(!historyPanel.hidden)); document.querySelector<HTMLElement>('#settings')!.hidden = true; renderHistory(); });
-newButton.addEventListener('click', () => { if (busy || !historyReady) return; currentId = crypto.randomUUID(); messages.length = 0; chat.replaceChildren(); prompt.value = ''; historyPanel.hidden = true; appendMessage('assistant', 'What would you like to do?'); prompt.focus(); });
+header.append(historyButton, newButton, historyPanel);
+const historyHeading = document.createElement('div'); historyHeading.className = 'history-heading';
+const historyTitle = document.createElement('strong'); historyTitle.textContent = 'Your chats';
+const historyCount = document.createElement('span'); historyCount.className = 'hint';
+historyHeading.append(historyTitle, historyCount);
+const historySearch = document.createElement('input'); historySearch.type = 'search'; historySearch.placeholder = 'Search chats…'; historySearch.setAttribute('aria-label', 'Search previous chats');
+const historyList = document.createElement('div'); historyList.className = 'history-list';
+const historyNote = document.createElement('p'); historyNote.className = 'hint history-note';
+historyPanel.append(historyHeading, historySearch, historyList, historyNote);
+function closeHistory(restoreFocus = false) {
+  historyPanel.hidden = true; historyButton.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) historyButton.focus();
+}
+historyButton.addEventListener('click', () => {
+  if (!historyPanel.hidden) { closeHistory(); return; }
+  historyPanel.hidden = false; historyButton.setAttribute('aria-expanded', 'true');
+  document.querySelector<HTMLElement>('#settings')!.hidden = true;
+  document.querySelector('#settings-toggle')!.setAttribute('aria-expanded', 'false');
+  historySearch.value = ''; renderHistory(); historySearch.focus();
+});
+historySearch.addEventListener('input', renderHistory);
+document.addEventListener('click', event => {
+  if (!historyPanel.hidden && !historyPanel.contains(event.target as Node) && !historyButton.contains(event.target as Node)) closeHistory();
+});
+header.addEventListener('focusout', event => {
+  if (event.relatedTarget && !header.contains(event.relatedTarget as Node)) closeHistory();
+});
+historyPanel.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { event.preventDefault(); closeHistory(true); }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    const items = Array.from(historyList.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+    const index = items.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'ArrowDown' ? index + 1 : index - 1;
+    event.preventDefault();
+    if (next < 0) historySearch.focus(); else items[Math.min(next, items.length - 1)]?.focus();
+  }
+});
+newButton.addEventListener('click', () => { if (busy || !historyReady) return; currentId = crypto.randomUUID(); messages.length = 0; chat.replaceChildren(); prompt.value = ''; closeHistory(); appendMessage('assistant', 'What would you like to do?'); prompt.focus(); });
 function renderHistory() {
-  historyPanel.replaceChildren();
-  const note = document.createElement('p'); note.className = 'hint'; note.textContent = 'Chats saved on this device. Switching is available after the current run.'; historyPanel.append(note);
-  for (const entry of conversations) {
-    const button = document.createElement('button'); button.textContent = entry.title; button.disabled = busy; button.setAttribute('aria-current', String(entry.id === currentId));
-    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) appendMessage(message.role, message.content); historyPanel.hidden = true; });
-    historyPanel.append(button);
+  historyList.replaceChildren();
+  historyCount.textContent = `${conversations.length} saved`;
+  historyNote.textContent = busy ? 'Task running. Switch chats when it finishes.' : 'Saved in this browser.';
+  const query = historySearch.value.trim().toLocaleLowerCase();
+  const entries = conversations.filter(entry => entry.title.toLocaleLowerCase().includes(query) || entry.messages.some(message => message.content.toLocaleLowerCase().includes(query)));
+  if (!historyReady || !entries.length) {
+    const empty = document.createElement('p'); empty.className = 'history-empty';
+    empty.textContent = !historyReady ? 'Loading chats…' : conversations.length ? 'No chats match your search.' : 'No chats yet. Start a conversation below.';
+    historyList.append(empty);
+  }
+  for (const entry of entries) {
+    const button = document.createElement('button'); button.className = 'history-entry'; button.disabled = busy; button.setAttribute('aria-current', String(entry.id === currentId));
+    const title = document.createElement('span'); title.className = 'history-entry-title'; title.textContent = entry.title;
+    const preview = document.createElement('span'); preview.className = 'history-entry-preview'; preview.textContent = entry.messages.at(-1)?.content.replace(/\s+/g, ' ').slice(0, 160) ?? '';
+    button.append(title, preview); button.title = entry.title;
+    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) appendMessage(message.role, message.content); closeHistory(); prompt.focus(); });
+    historyList.append(button);
   }
 }
 function saveConversation() {
@@ -45,7 +93,7 @@ function saveConversation() {
 }
 void chromeApi.storage.local.get('ulkaChats').then(stored => {
   if (Array.isArray(stored.ulkaChats)) conversations = stored.ulkaChats.filter((entry: any) => typeof entry?.id === 'string' && typeof entry.title === 'string' && Array.isArray(entry.messages) && entry.messages.every((message: any) => ['user','assistant'].includes(message.role) && typeof message.content === 'string'));
-}).finally(() => { historyReady = true; });
+}).finally(() => { historyReady = true; renderHistory(); });
 const approval = document.querySelector<HTMLDialogElement>("#approval")!;
 const approvalText = document.querySelector<HTMLElement>("#approval-text")!;
 let approvalId: string | undefined;
@@ -61,7 +109,7 @@ let streaming: HTMLElement | undefined;
 document.querySelector("#settings-toggle")!.addEventListener("click", event => {
   const settings = document.querySelector<HTMLElement>("#settings")!;
   settings.hidden = !settings.hidden;
-  historyPanel.hidden = true; historyButton.setAttribute('aria-expanded', 'false');
+  closeHistory();
   (event.currentTarget as HTMLElement).setAttribute("aria-expanded", String(!settings.hidden));
 });
 document.querySelectorAll<HTMLButtonElement>("[data-prompt]").forEach(button => button.addEventListener("click", () => { prompt.value = button.dataset.prompt!; prompt.focus(); }));
@@ -121,7 +169,7 @@ document.querySelector("#send")!.addEventListener("click", async () => {
   thinking = undefined; thinkingBody = undefined;
   messages.push({ role: "assistant", content: reply }); renderMarkdown(streaming, reply); streaming.classList.remove("streaming"); streaming.classList.toggle("error", !response.ok); streaming = undefined;
   saveConversation(); newButton.disabled = false;
-  clearInterval(timer); busy = false; document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; stop.hidden = true;
+  clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; stop.hidden = true;
   if (approval.open) approval.close();
   state.textContent = response.ok ? "Ready" : "Needs attention";
   progress.textContent = response.ok ? "Run finished. Review the response above." : "Request failed. Diagnostics available in settings.";
