@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "content_scripts": [{ "matches": ["http://*/*", "https://*/*"], "js": ["overlay.js"], "run_at": "document_idle" }],
+  "name": "Ulka",
+  "version": "0.2.0",
+  "icons": { "16": "icons/icon-16.png", "32": "icons/icon-32.png", "48": "icons/icon-48.png", "128": "icons/icon-128.png" },
+  "content_security_policy": { "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'" },
+  "description": "Constrained Jev-powered browser agent",
+  "permissions": ["activeTab", "debugger", "sidePanel", "storage", "tabs", "tabGroups", "downloads"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "action": { "default_title": "Open Ulka", "default_icon": { "16": "icons/icon-16.png", "32": "icons/icon-32.png" } },
+  "host_permissions": ["https://ai-gateway.vercel.sh/*"]
+}

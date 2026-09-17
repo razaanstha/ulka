@@ -1,0 +1,71 @@
+### macOS
+# Finder metadata
+.DS_Store
+
+# Thumbnails
+._*
+
+# Custom folder icons
+Icon
+
+# Volume root files
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+### Node
+# Dependencies
+node_modules/
+
+# Logs
+*.log
+
+# Runtime data
+*.pid
+*.pid.lock
+
+# Coverage
+coverage/
+*.lcov
+.nyc_output
+
+# Build output
+dist/
+build/Release
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Framework build output and caches
+.cache
+.parcel-cache
+.next
+out/
+.nuxt
+
+# dotenv environment variable files
+.env.*
+!.env.example
+ulka-logs-*.json
+# Publish reviewed demos as release assets instead of bloating Git history.
+demos/*.mp4
+demos/*.mov
+playwright-report/
+test-results/
+.env
+.env.local
+.env.*.local
+
+# npm cache directory
+.npm
+*.tgz
+
+# yarn v2
+.yarn/cache
+.yarn/unplugged
+.yarn/install-state.gz
+.pnp.*

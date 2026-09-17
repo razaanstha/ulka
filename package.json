@@ -1,0 +1,25 @@
+{
+  "name": "ulka",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "check": "bun run typecheck && bun run build && bun test",
+    "build": "bun run scripts/build.ts",
+    "test-page": "bun run scripts/serve-test-page.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "happy-dom": "^20.14.5",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "ai": "^7.0.105",
+    "libfx": "0.0.10",
+    "marked": "^18.0.13",
+    "zod": "^4.6.5"
+  }
+}

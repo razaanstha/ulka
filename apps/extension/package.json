@@ -1,0 +1,1 @@
+{"name":"@ulka/extension","license":"MIT","private":true,"type":"module","dependencies":{"@ulka/protocol":"workspace:*"}}

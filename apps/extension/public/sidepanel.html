@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ulka</title><link rel="stylesheet" href="sidepanel.css"><link rel="stylesheet" href="chat.css">
+</head>
+<body>
+  <header><div class="brand"><h1>ulka</h1></div><button id="settings-toggle" aria-label="Settings" title="Settings" aria-expanded="false">···</button></header>
+  <section id="settings" hidden aria-label="Settings">
+    <label for="api-key">Gateway API key</label><input id="api-key" type="password" autocomplete="off" placeholder="vck_…">
+    <button id="save-key">Save</button><span id="key-status" class="hint" role="status"></span>
+    <p class="hint">Saved only in this browser profile.</p>
+    <details><summary>Advanced</summary><label for="engine">Agent engine</label><select id="engine"><option value="fx">fx + Jev</option><option value="classic">Classic</option></select></details>
+    <details id="diagnostics"><summary>Help & diagnostics</summary><p class="hint">Review logs before sharing. They may contain page details.</p><button id="download-logs">Download logs</button><button id="copy-logs">Copy logs</button><p id="log-status" class="hint" role="status"></p><details><summary>Developer trace</summary><pre id="trace"></pre></details></details>
+  </section>
+  <main id="chat" class="chat" role="log" aria-live="polite" aria-label="Conversation"><section id="welcome"><h2>What’s the task?</h2><p>Ask anything about your browser.</p></section></main>
+  <footer>
+    <div class="activity" role="status"><span class="dot"></span><span id="state">Ready</span><span id="elapsed"></span></div><p id="activity-detail" class="hint"></p>
+    <div class="composer"><label for="prompt" class="sr-only">Message Ulka</label><textarea id="prompt" rows="1" placeholder="Message Ulka…"></textarea><div class="composer-bottom"><button id="stop" hidden aria-label="Stop current task">■ Stop</button><button id="send" aria-label="Send message">↑</button></div></div>
+  </footer>
+  <dialog id="approval"><h2>Allow this action?</h2><p id="approval-text"></p><button id="deny">Don’t allow</button><button id="approve">Allow</button></dialog>
+  <script type="module" src="sidepanel.js"></script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Ulka agent test</title></head>
+<body>
+  <label>Name <input id="name" type="text" autocomplete="off"></label>
+  <label>Search <input id="search" type="search" role="combobox" aria-controls="suggestions"></label>
+  <ul id="suggestions" role="listbox"></ul>
+  <label>Country <select id="country"><option value="np">Nepal</option><option value="se">Sweden</option></select></label>
+  <label><input id="notifications" type="checkbox"> Enable notifications</label>
+  <button id="rerender">Continue</button>
+  <p id="result" aria-live="polite"></p>
+  <script>
+    search.addEventListener('input', () => { suggestions.innerHTML = search.value ? '<li role="option"><button>Stockholm</button></li>' : ''; });
+    rerender.addEventListener('click', () => { const replacement = rerender.cloneNode(true); rerender.replaceWith(replacement); result.textContent = 'Continued'; });
+  </script>
+</body></html>
