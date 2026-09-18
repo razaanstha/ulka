@@ -330,10 +330,9 @@ function appendMessage(role: "user" | "assistant", content: string, error = fals
   element.className = `message ${role}${error ? " error" : ""}`;
   if (clarification) {
     element.className = 'message clarification';
-    const label = document.createElement('span'); label.className = 'clarification-label'; label.textContent = 'Answered';
     const question = document.createElement('div'); question.className = 'clarification-question'; question.textContent = clarification.question;
     const answer = document.createElement('div'); answer.className = 'clarification-answer'; answer.textContent = clarification.answer;
-    element.append(label, question, answer);
+    element.append(question, answer);
   } else if (role === 'assistant') renderMarkdown(element, content); else element.textContent = content;
   chatScroll.update(() => chat.append(element));
   return element;

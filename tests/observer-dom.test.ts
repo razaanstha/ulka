@@ -229,6 +229,16 @@ test('combobox links only observed suggestions and active option to its field', 
   expect(after.elements[0].activeOptionId).toBeUndefined();
 });
 
+test('infers implicit ARIA autocomplete fields as comboboxes', () => {
+  const window = page();
+  window.document.body.innerHTML = '<input role="textbox" aria-label="From" aria-autocomplete="list" aria-expanded="true" aria-controls="origins"><div id="origins" role="listbox"><div role="option">Stockholm</div></div>';
+  const snapshot = window.eval(OBSERVER_EXPRESSION);
+  const field = snapshot.elements.find((e: any) => e.label === 'From');
+  const option = snapshot.elements.find((e: any) => e.label === 'Stockholm');
+  expect(field).toMatchObject({ role: 'combobox', expanded: true, optionIds: [option.id] });
+  expect(field.operations).toContain('ARROW_DOWN');
+});
+
 test('select-only combobox exposes Enter without pretending it is editable', () => {
   const window = page();
   window.document.body.innerHTML = '<button role="combobox" aria-label="Cabin" aria-expanded="true">Economy</button>';
@@ -257,6 +267,23 @@ test('calendar buttons retain parent-cell selection without inheriting unrelated
   expect(before.elements.find((e: any) => e.label === 'Done').container).toBeUndefined();
   window.document.querySelector('[role="gridcell"]')!.setAttribute('aria-selected', 'false');
   expect(window.eval(OBSERVER_EXPRESSION).elements.find((e: any) => e.label === 'October 28, 2026').container.selected).toBe(false);
+});
+
+test('bare calendar gridcells remain actionable when no child control exists', () => {
+  const window = page();
+  window.document.body.innerHTML = '<div role="grid" aria-label="November 2026"><div role="gridcell" aria-label="November 15, 2026" aria-selected="true"></div></div>';
+  const snapshot = window.eval(OBSERVER_EXPRESSION);
+  expect(snapshot.elements[0]).toMatchObject({ role: 'gridcell', label: 'November 15, 2026', selected: true });
+  expect(snapshot.elements[0].operations).toContain('CLICK');
+});
+
+test('calendar gridcells inherit full date labels from Google-style nested day nodes', () => {
+  const window = page();
+  window.document.body.innerHTML = '<table role="table"><tbody><tr><td role="gridcell" aria-selected="false"><div><span aria-label="Sunday, November 15, 2026">15</span></div></td></tr></tbody></table>';
+  const snapshot = window.eval(OBSERVER_EXPRESSION);
+  expect(snapshot.elements).toHaveLength(1);
+  expect(snapshot.elements[0]).toMatchObject({ role: 'gridcell', label: 'Sunday, November 15, 2026', selected: false });
+  expect(snapshot.elements[0].operations).toContain('CLICK');
 });
 
 test('modal combobox includes its visible portaled options but not unrelated page controls', () => {

@@ -31,7 +31,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
       element.getAttribute?.("alt") || direct || element.getAttribute?.("title") || element.getAttribute?.("placeholder") || "";
   };
   ${ROLE_HELPERS}
-  const selector = 'a[href],button,input,textarea,select,summary,[contenteditable="true"],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="tab"],[role="menuitem"],[role="option"],[role="combobox"],[role="textbox"],[role="searchbox"],[role="spinbutton"]';
+  const selector = 'a[href],button,input,textarea,select,summary,[contenteditable="true"],[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="tab"],[role="menuitem"],[role="option"],[role="gridcell"],[role="combobox"],[role="textbox"],[role="searchbox"],[role="spinbutton"]';
   // Only modal dialogs restrict observation. Nonmodal popovers must not hide the page.
   const dialog = [...document.querySelectorAll('[aria-modal="true"],dialog[open]')].filter(element => {
     if (!visible(element)) return false;
@@ -78,6 +78,9 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
   const availability = new Map([...candidates].map(element => [element, unsafe(element) ? 'unsafe-input' : visibilityReason(element) || (element.matches(':disabled') || element.closest('[aria-disabled="true"]') ? 'disabled' : null) || (!interactionPoint(element) ? 'occluded' : null)]));
   const ordered = [...candidates].sort((a,b) => Number(!!availability.get(a)) - Number(!!availability.get(b)));
   for (const element of ordered) {
+    // Prefer concrete child controls inside calendar cells. Observe a bare
+    // gridcell only when it is itself the actionable target.
+    if (element.getAttribute('role') === 'gridcell' && element.querySelector('button,a,input,[role="button"],[role="link"]')) continue;
     diagnostics.candidates++;
     const ax = axRecords.get(element);
     const reason = availability.get(element) || (ax?.properties.disabled === true ? 'disabled' : null);

@@ -38,12 +38,13 @@ test('panel scopes live usage to request, saves final totals, restores history, 
 
     prompt.value = 'Read this page';
     window.document.querySelector<HTMLButtonElement>('#send')!.click();
-    expect(window.document.querySelector('.usage-summary')!.textContent).toContain('pending');
+    expect((window.document.querySelector('.usage-summary') as HTMLElement).hidden).toBe(true);
     const ledger = new ModelUsageLedger();
     ledger.record('fx_turn', { inputTokens: 100, outputTokens: 10 });
     listener({ type: 'MODEL_USAGE', requestId: 'other-task', usage: ledger.summary() });
-    expect(window.document.querySelector('.usage-summary')!.textContent).toContain('pending');
+    expect((window.document.querySelector('.usage-summary') as HTMLElement).hidden).toBe(true);
     listener({ type: 'MODEL_USAGE', requestId: request.requestId, usage: ledger.summary() });
+    expect((window.document.querySelector('.usage-summary') as HTMLElement).hidden).toBe(false);
     expect(window.document.querySelector('.usage-summary')!.textContent).toContain('110 tokens');
     ledger.record('verification', { inputTokens: 20, outputTokens: 5 });
     finish({ ok: true, result: { reply: 'Page summary' }, usage: ledger.summary() });

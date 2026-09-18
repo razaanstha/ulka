@@ -13,7 +13,7 @@ export interface AXNode {
 }
 const roles: Record<string, string> = {
   button: 'button', link: 'link', checkbox: 'checkbox', switch: 'checkbox', radio: 'radio', tab: 'tab',
-  menuitem: 'menuitem', menuitemcheckbox: 'checkbox', menuitemradio: 'radio', option: 'option',
+  menuitem: 'menuitem', menuitemcheckbox: 'checkbox', menuitemradio: 'radio', option: 'option', gridcell: 'gridcell', cell: 'gridcell',
   combobox: 'combobox', textbox: 'textbox', searchbox: 'searchbox', spinbutton: 'spinbutton',
 };
 const scopes = new Set(['dialog', 'alertdialog', 'form', 'region', 'group', 'listbox', 'grid', 'table']);

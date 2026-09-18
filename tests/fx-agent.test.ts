@@ -123,6 +123,7 @@ test("FX receives the bundled browsing skill without discovery metadata", async 
   expect(instructions).toContain("Your capabilities in this run are exactly");
   expect(instructions).toContain("observe_browser");
   expect(instructions).toContain("browser_subgoal");
+  expect(instructions).toContain("complete_task");
   expect(instructions).toContain("Never claim completion without observed evidence");
 });
 
@@ -149,6 +150,15 @@ test('FX exposes native close and retains closure evidence without page actions'
       .toMatchObject({ status: 'done', closedTabIds: [2], taskTabId: 1 });
   }));
   expect(result.status).toBe('done'); expect(calls).toEqual([]);
+});
+
+test('verified complete_task ends FX turn immediately', async () => {
+  const { host, calls } = fixture();
+  const result = await runFxBrowser('test', [], host, new AbortController().signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'complete_task')!.execute({}, { signal: new AbortController().signal });
+  }));
+  expect(result.status).toBe('done');
+  expect(calls).toEqual(['verify']);
 });
 
 test('scroll checkpoint supplies page evidence automatically before another subgoal', async () => {

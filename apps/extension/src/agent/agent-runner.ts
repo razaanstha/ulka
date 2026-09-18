@@ -7,6 +7,7 @@ import { StaleDecisionError } from "./freshness";
 import { hasIneffectiveRepetition, hasActionCycle, progressState, progressActionKey } from "./history";
 import type { CdpObserver } from "./observer";
 import { AgentStateMachine } from "./state-machine";
+import { findCachedAction, rememberAction, type CachedAction } from "./action-cache";
 
 export interface DecisionEngine { decide(goal: string, snapshot: PageSnapshot, history: ActionRecord[], feedback?: { evidence?: string; excludeDone?: boolean; exhaustedActions?: string[] }): Promise<AgentDecision> }
 export interface TextEngine { generate(goal: string, field: PageSnapshot["elements"][number], page: PageSnapshot, history: ActionRecord[]): Promise<string> }
@@ -17,6 +18,7 @@ export interface RunnerOptions {
   taskMemory?: TaskMemory;
   maxActions?: number;
   maxModelCalls?: number;
+  initialDecision?: AgentDecision;
   approve?: (decision: AgentDecision, snapshot: PageSnapshot, text?: string) => Promise<boolean>;
   onTrace?: (event: TraceEvent) => void;
 }
@@ -24,6 +26,7 @@ export interface TaskMemory {
   history: ActionRecord[];
   attempts: Map<string, number>;
   stateVisits?: Map<string, number>;
+  actionCache?: Map<string, CachedAction>;
 }
 export interface AgentResult { status: "done" | "blocked" | "stopped"; reason?: string; failure?: 'verification_unavailable'; history: ActionRecord[] }
 
@@ -53,6 +56,7 @@ export class AgentRunner {
     let scrollStreak = 0, emptyScrolls = 0;
     const seenContent = new Set<string>();
     const memory = this.options.taskMemory ?? { history: [], attempts: new Map<string, number>() };
+    const actionCache = memory.actionCache ??= new Map<string, CachedAction>();
     const stateVisits = memory.stateVisits ??= new Map<string, number>();
     try {
       while (!this.stopped) {
@@ -63,11 +67,15 @@ export class AgentRunner {
         nextSnapshot = undefined;
         this.trace("observe", { url: snapshot.url, title: snapshot.title, elements: snapshot.elements.length, fingerprint: snapshot.fingerprint, snapshotId: snapshot.snapshotId, diagnostics: snapshot.diagnostics });
         this.states.transition("DECIDING");
-        calls++;
         const exhaustedActions = [...memory.attempts].filter(([key, count]) => key.startsWith("progress:") && count >= 2).map(([key]) => key);
-        const decision = await this.decisions.decide(goal, snapshot, memory.history.slice(-10), exhaustedActions.length ? { ...feedback, exhaustedActions } : feedback);
+        // Cache replay is limited to a fresh run. This prevents one run from
+        // replaying its own successful click while preserving cross-subgoal speedups.
+        const cached = this.history.length === 0 && !feedback ? findCachedAction(actionCache, goal, snapshot) : undefined;
+        const forced = this.history.length === 0 && !feedback ? this.options.initialDecision : undefined;
+        calls += cached || forced ? 0 : 1;
+        const decision = forced ?? cached ?? await this.decisions.decide(goal, snapshot, memory.history.slice(-10), exhaustedActions.length ? { ...feedback, exhaustedActions } : feedback);
         if (this.stopped) return this.stoppedResult();
-        this.trace("decision", { operation: decision.operation, target: decision.target, confidence: decision.confidence, probabilities: decision.operationProbabilities, latencyMs: decision.latencyMs });
+        this.trace("decision", { operation: decision.operation, target: decision.target, confidence: decision.confidence, probabilities: decision.operationProbabilities, latencyMs: decision.latencyMs, cacheHit: Boolean(cached), observedAction: Boolean(forced) });
         if (decision.operation === "DONE") {
           if (!this.verifier) return this.blocked("Goal verifier unavailable.");
           if (calls >= maxModelCalls) return this.blocked("Agent model-call limit reached.");
@@ -150,6 +158,7 @@ export class AgentRunner {
         if (progressKey) memory.attempts.set(progressKey, (memory.attempts.get(progressKey) ?? 0) + 1);
         this.history.push(record);
         memory.history.push(record);
+        rememberAction(actionCache, goal, snapshot, decision, record);
         if (feedback) feedback.excludeDone = false;
         if (memory.history.length > 30) memory.history.shift();
         staleAttempts = 0;

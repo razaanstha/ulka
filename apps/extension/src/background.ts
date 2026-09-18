@@ -22,7 +22,10 @@ import { listDownloads } from './agent/downloads';
 import { readPageExpression } from './agent/read-page';
 import { evaluate } from './agent/cdp';
 import { WebMcpBridge } from './agent/webmcp';
-import type { PageSnapshot } from "../../../packages/protocol/src";
+import { PageExtractor, type ExtractRequest } from './agent/page-extractor';
+import { buildActionSpace } from './agent/action-space';
+import { observeActions, decisionFromObservedAction, type ObservedAction } from './agent/observed-actions';
+import type { AgentDecision, PageSnapshot } from "../../../packages/protocol/src";
 
 let activeRunner: AgentRunner | undefined;
 let activeFx: AbortController | undefined;
@@ -143,7 +146,7 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
   });
   // Chrome API activity keeps the MV3 worker alive during streamed model responses.
   const keepAlive = setInterval(() => void chromeApi.storage.local.get("ulkaEngine"), 20_000);
-  const observe = async () => {
+  const observe = async (instruction?: string) => {
     controller.signal.throwIfAborted();
     await showOverlay(taskTabId);
     const { tabs } = await nativeTabs.list();
@@ -155,7 +158,14 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
     try {
       const page = await browser.observer.observe();
       const webmcp = await new WebMcpBridge(chromeApi.debugger, { tabId: taskTabId }).discover(controller.signal);
-      return { tabId: taskTabId, page: { url: page.url, title: page.title, text: page.text, elements: page.elements }, tabs, webmcp };
+      const actions = observeActions(page);
+      let suggestedActions = undefined;
+      if (instruction?.trim()) {
+        const decision = await new VercelJevDecisionEngine(apiKey, undefined, controller.signal, reportUsage).decide(instruction, page, []);
+        const suggested = actions.find(action => action.operation === decision.operation && action.target === decision.target && action.option === decision.option);
+        suggestedActions = suggested ? [suggested] : [];
+      }
+      return { tabId: taskTabId, page: { url: page.url, title: page.title, text: page.text, elements: page.elements }, actions, suggestedActions, actionSpace: buildActionSpace(page), tabs, webmcp };
     } finally { await browser.detach(); }
   };
   try {
@@ -218,6 +228,23 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
         return result;
       },
       observe,
+      extractPage: async (input: ExtractRequest, signal) => {
+        controller.signal.throwIfAborted(); signal.throwIfAborted();
+        const started = performance.now();
+        const page = await observeTaskPage(taskTabId);
+        const result = await new PageExtractor(apiKey, undefined, reportUsage).extract(input, page, signal);
+        return { status: 'extracted', url: page.url, result, metadata: { actionId: crypto.randomUUID(), cache: { status: 'DISABLED' }, elapsedMs: performance.now() - started } };
+      },
+      actAction: async (input: { goal: string; action: ObservedAction }, signal) => {
+        controller.signal.throwIfAborted(); signal.throwIfAborted();
+        const page = await observeTaskPage(taskTabId);
+        if (input.action.snapshotFingerprint !== page.fingerprint) {
+          return { status: 'blocked', reason: 'Observed action is stale. Observe again before replaying it.' };
+        }
+        const result = await run(input.goal, apiKey, taskTabId, signal, taskMemory, background, decisionFromObservedAction(input.action));
+        taskTabId = result.tabId;
+        return { ...result, observation: await observe(), metadata: { actionId: input.action.id, replayed: true, snapshotFingerprint: input.action.snapshotFingerprint } };
+      },
       navigate: async (value, newTab) => {
         controller.signal.throwIfAborted();
         const url = validateNavigationUrl(value);
@@ -266,7 +293,7 @@ async function observeTaskPage(tabId?: number): Promise<PageSnapshot> {
 
 export { validateNavigationUrl } from "./agent/navigation";
 
-async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, signal?: AbortSignal, taskMemory?: TaskMemory, backgroundMode?: boolean) {
+async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, signal?: AbortSignal, taskMemory?: TaskMemory, backgroundMode?: boolean, initialDecision?: AgentDecision) {
   if (!goal.trim()) throw new Error("Goal required");
   const stored = suppliedApiKey ? {} : await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaBackground"]);
   const background = backgroundMode ?? stored.ulkaBackground === true;
@@ -302,6 +329,7 @@ async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, si
     const runner = new AgentRunner(observer, new VercelJevDecisionEngine(apiKey, undefined, requests.signal, reportUsage), browser.executor, states, {
       cancelRequests: () => requests.abort(),
       taskMemory,
+      initialDecision,
       maxActions: signal ? 8 : 30,
       maxModelCalls: signal ? 16 : 60,
       onTrace: (event) => { void log(event.type, event); void chromeApi.runtime.sendMessage({ type: "TRACE", event }).catch(() => {}); },

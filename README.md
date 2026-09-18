@@ -15,6 +15,18 @@ An experimental browser-agent extension. Runs locally in your browser, with mode
 
 fx plans browser subgoals, GLM handles language tasks, and Jev selects constrained actions from observed page elements. Ulka validates targets, executes browser actions, and checks outcomes. It can still make mistakes: supervise it, especially on signed-in sites.
 
+### Stagehand-style browser primitives
+
+Ulka uses Stagehand-style patterns without importing Stagehand's separate CDP runtime:
+
+- `observe_browser` returns the current page plus an action catalog built from validated controls.
+- `browser_subgoal` provides natural-language `act` behavior through Jev, with deterministic execution and stale-target recovery.
+- `act_action` replays one action returned by `observe_browser` without another planning call, after exact snapshot validation.
+- `extract_page` returns schema-validated structured fields from the latest observed page. Missing or ambiguous fields return `null`.
+- Successful `CLICK` and `SELECT` actions can replay across repeated subgoals only when URL, goal, semantic page state, and target meaning all match. Changed state falls back to Jev.
+
+This keeps Ulka's local browser ownership, approval gates, evidence capture, and final verification while adopting Stagehand's observe, act, extract, and caching model.
+
 ## Setup
 
 Requirements: [Bun](https://bun.sh) 1.4.2, a Chromium-based browser with side panels and the debugger API, and your own [Vercel AI Gateway](https://vercel.com/ai-gateway) key with access to the configured models. Development has been tested in Helium on macOS. Other browsers/platforms are not yet verified. Run the commands below from the repository root.

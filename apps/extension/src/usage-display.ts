@@ -4,8 +4,9 @@ export function renderUsage(element: HTMLElement, usage?: UsageSummary, running 
   element.className = 'usage-summary';
   element.setAttribute('role', 'status');
   element.setAttribute('aria-live', 'polite');
+  element.hidden = !usage?.reports;
   if (!usage?.reports) {
-    element.textContent = running ? 'Tokens pending · Cost pending' : 'Token usage unavailable · Cost unavailable';
+    element.textContent = '';
   } else {
     const tokens = `${(usage.inputTokens + usage.outputTokens).toLocaleString('en-US')} tokens`;
     const breakdown = `${usage.inputTokens.toLocaleString('en-US')} in / ${usage.outputTokens.toLocaleString('en-US')} out`;

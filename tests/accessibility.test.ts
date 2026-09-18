@@ -63,6 +63,16 @@ test('AX mapping caches DOM handles across polls and refreshes semantic records'
   expect(methods.filter(m => m === 'DOM.resolveNode')).toHaveLength(2);
 });
 
+test('AX date cells map to actionable gridcells', () => {
+  const records = accessibilityRecords([
+    { nodeId: 'root', role: { value: 'RootWebArea' }, childIds: ['calendar'] },
+    { nodeId: 'calendar', role: { value: 'table' }, childIds: ['date'] },
+    { nodeId: 'date', backendDOMNodeId: 77, role: { value: 'cell' }, name: { value: 'Sunday, November 15, 2026' }, properties: [{ name: 'focusable', value: { value: true } }] },
+  ]);
+  expect(records).toHaveLength(1);
+  expect(records[0]).toMatchObject({ backendNodeId: 77, role: 'gridcell', label: 'Sunday, November 15, 2026' });
+});
+
 test('execution rejects changed accessibility semantics before any DOM action', async () => {
   const validator = new FreshnessValidator({ attach: async () => {}, detach: async () => {}, sendCommand: async () => ({ nodes: [{ backendDOMNodeId: 42, role: { value: 'textbox' }, name: { value: 'Another editor' } }] }) }, { tabId: 1 });
   await expect(validator.validateTarget({ guards: { e1: { accessibility: { backendNodeId: 42, role: 'textbox', name: 'Write a message' } } } } as unknown as PageSnapshot, 'e1')).rejects.toThrow('Accessibility target changed');

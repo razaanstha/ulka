@@ -43,12 +43,13 @@ test('missing pricing and usage remain partial; previous snapshots stay immutabl
   expect(element.textContent).toContain('Est. $0.0140');
 });
 
-test('pending, unavailable and interrupted usage never imply a free completed run', () => {
+test('pending usage stays hidden until reported data exists', () => {
   const element = new Window().document.createElement('div') as unknown as HTMLElement;
   renderUsage(element, undefined, true);
-  expect(element.textContent).toBe('Tokens pending · Cost pending');
+  expect(element.hidden).toBe(true);
+  expect(element.textContent).toBe('');
   renderUsage(element);
-  expect(element.textContent).toContain('unavailable');
+  expect(element.hidden).toBe(true);
   const missing = new ModelUsageLedger();
   missing.setPrices({ [LANGUAGE_MODEL]: { input: 0.001, output: 0.002 } });
   missing.record('fx_turn', undefined);
@@ -56,6 +57,7 @@ test('pending, unavailable and interrupted usage never imply a free completed ru
   const ledger = new ModelUsageLedger();
   ledger.record('fx_turn', { inputTokens: 100, outputTokens: 20 });
   renderUsage(element, ledger.summary(), false, true);
+  expect(element.hidden).toBe(false);
   expect(element.textContent).toContain('Cost unavailable');
   expect(element.textContent).toContain('Partial');
   expect(element.title).toContain('ended early');
