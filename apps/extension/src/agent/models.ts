@@ -1,1 +1,1 @@
-export const LANGUAGE_MODEL = "zai/glm-5.2-fast";
+export const LANGUAGE_MODEL = "deepseek/deepseek-v4.1-flash";

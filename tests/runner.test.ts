@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AgentRunner } from "../apps/extension/src/agent/agent-runner";
 import { StaleDecisionError } from "../apps/extension/src/agent/freshness";
+import { OutcomeVerifier, VerificationUnavailableError } from '../apps/extension/src/agent/outcome-verifier';
 import type { PageSnapshot } from "../packages/protocol/src";
 
 const makeSnapshot = (fingerprint: string): PageSnapshot => ({ snapshotId: fingerprint, fingerprint, pageIdentity: "p", url: "https://example.test", title: "", text: "About",
@@ -8,6 +9,46 @@ const makeSnapshot = (fingerprint: string): PageSnapshot => ({ snapshotId: finge
   guards: { e1: { nodeId: 1, role: "button", label: "About", enabled: true, rect: { x: 0, y: 0, width: 10, height: 10 } } } });
 
 describe("agent runner", () => {
+  test('popup focus transfer reobserves and explains recovery before typing into the new editor', async () => {
+    let opened = false, decisions = 0;
+    const typed: string[] = [];
+    const runner = new AgentRunner({ observe: async () => ({ ...makeSnapshot(opened ? 'popup' : 'trigger'), elements: [
+      { id: opened ? 'popup' : 'trigger', nodeId: opened ? 2 : 1, role: 'combobox', label: 'Where to?', focused: opened, operations: ['TYPE_TEXT' as const] },
+    ] }) } as never, { decide: async (_goal, page, _history, feedback) => {
+      if (++decisions === 2) {
+        expect(feedback?.evidence).toContain('Typing target lost focus');
+        expect(feedback?.excludeDone).toBe(true);
+        expect(page.elements[0].focused).toBe(true);
+      }
+      return typed.length ? { operation: 'DONE', confidence: 1 } : { operation: 'TYPE_TEXT', target: page.elements[0].id, confidence: 1 };
+    } }, { execute: async (_page: PageSnapshot, decision: { target?: string }) => {
+      if (!opened) { opened = true; throw new StaleDecisionError('Typing target lost focus or changed after click'); }
+      typed.push(decision.target!);
+    } } as never, undefined, {}, { generate: async () => 'Vienna' }, { verify: async () => ({ satisfied: true, evidence: 'Vienna selected' }) });
+    expect((await runner.run('Choose Vienna')).status).toBe('done');
+    expect(typed).toEqual(['popup']);
+  });
+  test('transient completion-check failure resumes without replaying the browser action', async () => {
+    let actions = 0, decisions = 0, checks = 0;
+    const verifier = new OutcomeVerifier('test', undefined, undefined, { generate: async () => {
+      if (++checks === 1) throw Object.assign(new Error('Temporary'), { name: 'GatewayInternalServerError' });
+      return { output: { satisfied: true, evidence: 'About page observed' } };
+    } });
+    const runner = new AgentRunner({ observe: async () => makeSnapshot(String(actions)) } as never,
+      { decide: async () => { decisions++; return actions ? { operation: 'DONE', confidence: 1 } : { operation: 'CLICK', target: 'e1', confidence: 1 }; } },
+      { execute: async () => { actions++; } } as never, undefined, {}, undefined, verifier);
+    expect((await runner.run('Open About')).status).toBe('done');
+    expect(actions).toBe(1); expect(decisions).toBe(2); expect(checks).toBe(2);
+  });
+  test('unavailable verification blocks without another decision or action', async () => {
+    let decisions = 0;
+    const runner = new AgentRunner({ observe: async () => makeSnapshot('same') } as never,
+      { decide: async () => { decisions++; return { operation: 'DONE', confidence: 1 }; } },
+      { execute: async () => { throw new Error('must not execute'); } } as never, undefined, {}, undefined,
+      { verify: async () => { throw new VerificationUnavailableError(); } });
+    expect(await runner.run('Open About')).toMatchObject({ status: 'blocked', failure: 'verification_unavailable' });
+    expect(decisions).toBe(1);
+  });
   test('sensitive generated text is reviewed before execution and denial prevents typing', async () => {
     const snapshot = makeSnapshot('sensitive');
     snapshot.elements[0] = { id: 'e1', nodeId: 1, role: 'textbox', label: 'Card number', operations: ['TYPE_TEXT'] };

@@ -75,8 +75,14 @@ export class BrowserExecutor {
       const changed = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!(e?.tagName === 'SELECT') || !e.options[${option}] || e.options[${option}].disabled) return false; e.selectedIndex=${option}; e.dispatchEvent(new e.ownerDocument.defaultView.Event('input',{bubbles:true})); e.dispatchEvent(new e.ownerDocument.defaultView.Event('change',{bubbles:true})); return true; })()`);
       if (!changed) throw new StaleDecisionError("Select option unavailable: " + decision.option); return;
     }
-    await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
-    await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    // Popup editors can already own focus. Clicking them again can close the
+    // popup or reset its selection. Validate focus live, not from the snapshot.
+    const alreadyFocused = decision.operation === 'TYPE_TEXT' && await evaluate<boolean>(this.api, this.target,
+      `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); return !!e?.isConnected && e.getRootNode().activeElement === e; })()`);
+    if (!alreadyFocused) {
+      await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+      await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
+    }
     if (decision.operation === "TYPE_TEXT") {
       if (!text) throw new Error("TYPE_TEXT requires generated text");
       // Clicking a date/search field can open a popup and focus a replacement.

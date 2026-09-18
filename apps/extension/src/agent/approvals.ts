@@ -5,6 +5,11 @@ const BLOCKED = /\b(delete account|transfer money|wire transfer)\b/i;
 const CONFIRM = /\b(send|submit|publish|purchase|buy|checkout|delete|remove|subscribe|confirm order|account)\b/i;
 const SENSITIVE_FIELD = /\b(card|cvv|cvc|routing|account number|social security|ssn|passport|tax id)\b/i;
 
+export function classifyWebMcpTool(name: string, description: string): RiskLevel {
+  const label = `${name.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ')} ${description}`;
+  return BLOCKED.test(label) ? 'blocked' : 'confirm';
+}
+
 export function classifyAction(snapshot: PageSnapshot, decision: AgentDecision): RiskLevel {
   if (decision.operation === 'RIGHT_CLICK') return 'confirm';
   if (["HOVER", "SCROLL_ELEMENT_DOWN", "SCROLL_ELEMENT_UP"].includes(decision.operation)) return "safe";

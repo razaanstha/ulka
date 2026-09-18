@@ -40,6 +40,9 @@ export function accessibilityRecords(nodes: AXNode[]) {
   }
   const roleFor = (node: AXNode) => {
     const role = node.role?.value ?? '';
+    // Dialog focus supports keyboard containment, not a click action. Keep it
+    // as ancestor context for its controls without making its backdrop a target.
+    if (['dialog', 'alertdialog'].includes(role)) return undefined;
     if (roles[role]) return roles[role];
     const focusable = node.properties?.some(p => p.name === 'focusable' && p.value.value === true);
     if (!focusable || ['RootWebArea','WebArea','StaticText','InlineTextBox'].includes(role)) return undefined;

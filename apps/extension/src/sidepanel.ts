@@ -1,23 +1,35 @@
+import { preservePartialResponse } from './partial-response';
+import { createUserQuestionPanel } from './user-question-panel';
+import type { PendingQuestion } from './agent/user-question';
+import type { UsageSummary } from "./agent/model-usage";
+import { renderUsage } from "./usage-display";
 import { createChatScroll } from "./chat-scroll";
 import { chromeApi } from "./chrome";
 import { LOG_KEY, sanitize } from "./diagnostics";
 import type { ConversationMessage } from "./agent/conversation";
 import { renderMarkdown } from "./markdown";
 import { formatApprovalRequest, type ApprovalRequest } from './agent/approval-request';
+import { LANGUAGE_MODEL } from "./agent/models";
 
 const prompt = document.querySelector<HTMLTextAreaElement>("#prompt")!;
 const apiKey = document.querySelector<HTMLInputElement>("#api-key")!;
+document.querySelector<HTMLElement>("#model-name")!.textContent = LANGUAGE_MODEL;
 const keyStatus = document.querySelector<HTMLElement>("#key-status")!;
 const state = document.querySelector<HTMLElement>("#state")!;
 const chat = document.querySelector<HTMLElement>("#chat")!;
 const chatScroll = createChatScroll(chat);
 const trace = document.querySelector<HTMLElement>("#trace")!;
-const messages: ConversationMessage[] = [];
-type SavedChat = { id: string; title: string; messages: ConversationMessage[] };
+type ChatMessage = ConversationMessage & { usage?: UsageSummary; usageIncomplete?: boolean; clarification?: { question: string; answer: string } };
+const messages: ChatMessage[] = [];
+let usageElement: HTMLElement | undefined;
+let currentUsage: UsageSummary | undefined;
+let usageRequestId: string | undefined;
+type SavedChat = { id: string; title: string; messages: ChatMessage[] };
 let conversations: SavedChat[] = [];
 let currentId: string = crypto.randomUUID();
 let historyReady = false;
 let streamedText = '';
+let committedReply = '';
 let thinking: HTMLDetailsElement | undefined;
 let thinkingBody: HTMLElement | undefined;
 let thinkingText = '';
@@ -25,11 +37,28 @@ let thinkingScroll: ReturnType<typeof createChatScroll> | undefined;
 let saveQueue = Promise.resolve();
 // Large searchable history dropdown, keeping the existing local chat storage.
 const header = document.querySelector('header')!;
+const settingsPanel = document.querySelector<HTMLElement>('#settings')!;
+const settingsButton = document.querySelector<HTMLButtonElement>('#settings-toggle')!;
+header.append(settingsPanel);
+function closeSettings(restoreFocus = false) {
+  settingsPanel.hidden = true; settingsButton.setAttribute('aria-expanded', 'false');
+  if (restoreFocus) settingsButton.focus();
+}
+document.addEventListener('click', event => {
+  if (!settingsPanel.hidden && !settingsPanel.contains(event.target as Node) && !settingsButton.contains(event.target as Node)) closeSettings();
+});
+settingsPanel.addEventListener('keydown', event => {
+  if (event.key === 'Escape') { event.preventDefault(); closeSettings(true); }
+});
+settingsPanel.addEventListener('focusout', event => {
+  if (event.relatedTarget && !settingsPanel.contains(event.relatedTarget as Node) && event.relatedTarget !== settingsButton) closeSettings();
+});
 const historyPanel = document.createElement('section'); historyPanel.id = 'history'; historyPanel.hidden = true;
 historyPanel.setAttribute('aria-label', 'Previous chats');
-const historyButton = document.createElement('button'); historyButton.id = 'history-toggle'; historyButton.textContent = 'Chats ▾'; historyButton.setAttribute('aria-label', 'Open previous chats');
+const historyButton = document.createElement('button'); historyButton.id = 'history-toggle'; historyButton.textContent = 'Chats';
+const historyChevron = document.createElement('span'); historyChevron.className = 'history-chevron'; historyChevron.setAttribute('aria-hidden', 'true'); historyButton.append(historyChevron); historyButton.setAttribute('aria-label', 'Open previous chats');
 historyButton.setAttribute('aria-controls', 'history'); historyButton.setAttribute('aria-expanded', 'false');
-const newButton = document.createElement('button'); newButton.textContent = '+'; newButton.setAttribute('aria-label', 'New chat');
+const newButton = document.createElement('button'); newButton.id = 'new-chat'; newButton.textContent = '+'; newButton.title = 'New chat'; newButton.setAttribute('aria-label', 'New chat');
 header.append(historyButton, newButton, historyPanel);
 const historyHeading = document.createElement('div'); historyHeading.className = 'history-heading';
 const historyTitle = document.createElement('strong'); historyTitle.textContent = 'Your chats';
@@ -83,8 +112,10 @@ function renderHistory() {
     const button = document.createElement('button'); button.className = 'history-entry'; button.disabled = busy; button.setAttribute('aria-current', String(entry.id === currentId));
     const title = document.createElement('span'); title.className = 'history-entry-title'; title.textContent = entry.title;
     const preview = document.createElement('span'); preview.className = 'history-entry-preview'; preview.textContent = entry.messages.at(-1)?.content.replace(/\s+/g, ' ').slice(0, 160) ?? '';
-    button.append(title, preview); button.title = entry.title;
-    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) appendMessage(message.role, message.content); chatScroll.bottom(); closeHistory(); prompt.focus(); });
+    const copy = document.createElement('span'); copy.className = 'history-entry-copy'; copy.append(title, preview);
+    const indicator = document.createElement('span'); indicator.className = 'history-entry-indicator'; indicator.setAttribute('aria-hidden', 'true'); indicator.textContent = entry.id === currentId ? '✓' : '›';
+    button.append(copy, indicator); button.title = entry.title;
+    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) { appendMessage(message.role, message.content, false, message.clarification); if (message.role === "assistant") appendUsage(message.usage, false, message.usageIncomplete); } chatScroll.bottom(); closeHistory(); prompt.focus(); });
     historyList.append(button);
   }
 }
@@ -111,15 +142,54 @@ const diagnostics = document.querySelector<HTMLElement>("#diagnostics")!;
 const send = document.querySelector<HTMLButtonElement>("#send")!;
 const stop = document.querySelector<HTMLButtonElement>("#stop")!;
 let busy = false;
+const questionPanel = createUserQuestionPanel(document.querySelector<HTMLElement>('#user-question')!, message => chromeApi.runtime.sendMessage(message), (question, answer) => {
+  chatScroll.update(() => {
+    // Seal pre-question output before inserting the answer and continuing below it.
+    if (streaming) {
+      if (streamedText.trim()) {
+        messages.push({ role: 'assistant', content: streamedText });
+        streaming.classList.remove('streaming');
+      } else streaming.remove();
+      committedReply += streamedText; streamedText = '';
+    }
+    const content = `Answer to clarification ${JSON.stringify(question)}: ${answer}`;
+    messages.push({ role: 'user', content, clarification: { question, answer } });
+    appendMessage('user', content, false, { question, answer });
+    if (busy) {
+      streaming = appendMessage('assistant', ''); streaming.classList.add('streaming');
+      if (usageElement) chat.append(usageElement);
+    }
+    saveConversation(); state.textContent = 'Continuing…';
+  });
+});
+void chromeApi.runtime.sendMessage({ type: 'GET_USER_QUESTION' }).then(raw => {
+  const response = raw as { question?: PendingQuestion };
+  if (response?.question) { questionPanel.show(response.question); state.textContent = 'Waiting for your answer'; stop.hidden = false; send.disabled = true; }
+}).catch(() => {});
+
 let streaming: HTMLElement | undefined;
 document.querySelector("#settings-toggle")!.addEventListener("click", event => {
   const settings = document.querySelector<HTMLElement>("#settings")!;
   settings.hidden = !settings.hidden;
   closeHistory();
   (event.currentTarget as HTMLElement).setAttribute("aria-expanded", String(!settings.hidden));
+  if (!settings.hidden) settings.querySelector<HTMLInputElement>("input")?.focus();
 });
 document.querySelectorAll<HTMLButtonElement>("[data-prompt]").forEach(button => button.addEventListener("click", () => { prompt.value = button.dataset.prompt!; prompt.focus(); }));
 const logStatus = diagnostics.querySelector<HTMLElement>("#log-status")!;
+diagnostics.querySelector<HTMLButtonElement>('#test-model')!.addEventListener('click', async event => {
+  const button = event.currentTarget as HTMLButtonElement;
+  button.disabled = true;
+  logStatus.textContent = 'Testing model connection…';
+  try {
+    const response = await chromeApi.runtime.sendMessage({ type: 'TEST_MODEL' }) as {
+      ok: boolean; error?: string; results?: Array<{ check: string; status: string; transport: { status?: number } }>;
+    };
+    if (!response.ok) throw new Error(response.error ?? 'Model test failed');
+    logStatus.textContent = response.results!.map(result => `${result.check}: ${result.status}${result.transport.status ? ` (HTTP ${result.transport.status})` : ''}`).join('; ') + '. Copy logs for details.';
+  } catch (error) { logStatus.textContent = error instanceof Error ? error.message : 'Model test failed'; }
+  finally { button.disabled = false; }
+});
 async function report(): Promise<string> {
   const stored = await chromeApi.storage.local.get([LOG_KEY, "vercelAiGatewayApiKey", "ulkaLastPanelError"]);
   const build = await fetch("manifest.json").then(response => response.json());
@@ -157,30 +227,49 @@ document.querySelector("#send")!.addEventListener("click", async () => {
   const started = Date.now();
   const timer = setInterval(() => { document.querySelector("#elapsed")!.textContent = `${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
   messages.push({ role: "user", content }); appendMessage("user", content); chatScroll.bottom(); prompt.value = ""; prompt.style.height = ""; state.textContent = "Thinking"; trace.textContent = ""; progress.textContent = "Understanding your request";
-  thinking = document.createElement('details'); thinking.className = 'thinking-box'; thinking.open = true;
+  thinking = document.createElement('details'); thinking.className = 'thinking-box'; thinking.open = true; thinking.hidden = true;
   const thinkingSummary = document.createElement('summary'); thinkingSummary.textContent = 'Thinking';
-  thinkingBody = document.createElement('div'); thinkingBody.className = 'thinking-content'; thinkingBody.textContent = 'Working on your request. Reasoning appears here when provided by the model.';
+  thinkingBody = document.createElement('div'); thinkingBody.className = 'thinking-content'; thinkingBody.textContent = 'Working on your request…';
   thinkingScroll = createChatScroll(thinkingBody);
   thinking.append(thinkingSummary, thinkingBody); chat.append(thinking); thinkingText = '';
   streaming = appendMessage("assistant", ""); streaming.classList.add("streaming");
-  streamedText = ''; saveConversation(); newButton.disabled = true; renderHistory();
-  let response: { ok?: boolean; result?: { reply?: string }; error?: string };
-  try { response = await chromeApi.runtime.sendMessage({ type: "CHAT", messages }) as typeof response; }
+  currentUsage = undefined; usageRequestId = crypto.randomUUID();
+  usageElement = appendUsage(undefined, true);
+  streamedText = ''; committedReply = ''; saveConversation(); newButton.disabled = true; renderHistory();
+  let response: { ok?: boolean; result?: { reply?: string; partialReply?: string; interruptionReason?: string; status?: string; result?: { status?: string } }; error?: string; usage?: UsageSummary };
+  try { response = await chromeApi.runtime.sendMessage({ type: "CHAT", requestId: usageRequestId, messages: messages.map(({ role, content }) => ({ role, content })) }) as typeof response; }
   catch (error) {
     response = { ok: false, error: error instanceof Error ? error.message : "Extension connection lost" };
     void chromeApi.storage.local.set({ ulkaLastPanelError: { at: new Date().toISOString(), error: sanitize(error, "", [apiKey.value]) } }).catch(() => {});
     logStatus.textContent = "Connection failed. Download logs and include this error.";
   }
-  const reply = response.ok ? response.result?.reply ?? "Done." : response.error ?? "Request failed";
+  currentUsage = response.usage ?? currentUsage;
+  const runStatus = response.result?.status ?? response.result?.result?.status;
+  const usageIncomplete = !response.ok || runStatus === 'stopped' || runStatus === 'blocked';
+  renderUsage(usageElement!, currentUsage, false, usageIncomplete);
+  usageElement = undefined; usageRequestId = undefined;
+  const remainingReply = (text: string) => committedReply && text.startsWith(committedReply) ? text.slice(committedReply.length).trimStart() : text;
+  const finalReply = response.ok ? remainingReply(response.result?.reply ?? "Done.") : response.error ?? "Request failed";
+  const partial = response.result?.partialReply ? remainingReply(response.result.partialReply) : streamedText;
+  const reply = usageIncomplete
+    ? response.result?.interruptionReason
+      ? preservePartialResponse(partial, response.result.interruptionReason)
+      : preservePartialResponse(partial, finalReply)
+    : finalReply;
   chatScroll.update(() => {
-  if (thinking) { thinking.open = false; thinking.querySelector('summary')!.textContent = response.ok ? 'Thinking finished' : 'Thinking stopped'; }
+  if (thinkingBody && thinkingText) renderMarkdown(thinkingBody, thinkingText);
+  if (thinking) {
+    thinking.open = usageIncomplete && !!thinkingText;
+    thinking.querySelector('summary')!.textContent = usageIncomplete ? 'Thinking interrupted' : 'Thinking finished';
+  }
   thinking = undefined; thinkingBody = undefined; thinkingScroll = undefined;
-  messages.push({ role: "assistant", content: reply }); renderMarkdown(streaming!, reply); streaming!.classList.remove("streaming"); streaming!.classList.toggle("error", !response.ok); streaming = undefined;
+  messages.push({ role: "assistant", content: reply, usage: currentUsage, usageIncomplete }); renderMarkdown(streaming!, reply); streaming!.classList.remove("streaming"); streaming!.classList.toggle("error", !response.ok); streaming = undefined;
   saveConversation(); newButton.disabled = false;
   clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; taskMode.disabled = false; stop.hidden = true;
   if (approval.open) approval.close();
-  state.textContent = response.ok ? "Ready" : "Needs attention";
-  progress.textContent = response.ok ? "Run finished. Review the response above." : "Request failed. Diagnostics available in settings.";
+  questionPanel.close();
+  state.textContent = runStatus === "stopped" ? "Stopped" : usageIncomplete ? "Needs attention" : "Ready";
+  progress.textContent = usageIncomplete ? "Run incomplete. Partial response preserved above." : "Run finished. Review the response above.";
   });
 });
 prompt.addEventListener("keydown", (event) => {
@@ -189,9 +278,19 @@ prompt.addEventListener("keydown", (event) => {
 prompt.addEventListener('input', () => { prompt.style.height = 'auto'; prompt.style.height = `${Math.min(prompt.scrollHeight, 180)}px`; });
 stop.addEventListener("click", () => { state.textContent = "Stopping…"; void chromeApi.runtime.sendMessage({ type: "STOP" }); });
 chromeApi.runtime.onMessage.addListener((raw) => {
-  const message = raw as { type?: string; state?: string; event?: unknown; operation?: string; label?: string; id?: number; error?: string; text?: string; request?: ApprovalRequest; approvalId?: string };
-  if (message.type === 'FX_REASONING' && message.text && busy && thinkingBody) {
+  const message = raw as { type?: string; requestId?: string; usage?: UsageSummary; state?: string; event?: unknown; operation?: string; label?: string; id?: number; error?: string; text?: string; request?: ApprovalRequest; approvalId?: string; question?: PendingQuestion; questionId?: string };
+  if (message.type === 'USER_QUESTION' && message.question) {
+    questionPanel.show(message.question); state.textContent = 'Waiting for your answer';
+    progress.textContent = 'Answer below to continue. Your task progress is preserved.';
+  }
+  if (message.type === 'USER_QUESTION_CLOSED') { questionPanel.close(message.questionId); if (!busy) { send.disabled = false; stop.hidden = true; } }
+  if (message.type === 'MODEL_USAGE' && message.requestId === usageRequestId && busy && usageElement && message.usage) {
+    currentUsage = message.usage;
+    chatScroll.update(() => renderUsage(usageElement!, currentUsage, true));
+  }
+  if (message.type === 'FX_REASONING'  && message.text && busy && thinkingBody) {
     thinkingText += message.text;
+    if (thinking && thinkingText.trim()) thinking.hidden = false;
     chatScroll.update(() => thinkingScroll?.update(() => renderMarkdown(thinkingBody!, thinkingText)));
   }
   if (message.type === "FX_PROGRESS" && message.text && streaming) {
@@ -226,10 +325,23 @@ function respondToApproval(approved: boolean) {
   if (id) void chromeApi.runtime.sendMessage({ type: "APPROVAL_RESPONSE", approvalId: id, approved });
 }
 
-function appendMessage(role: "user" | "assistant", content: string, error = false) {
+function appendMessage(role: "user" | "assistant", content: string, error = false, clarification?: { question: string; answer: string }) {
   const element = document.createElement("div");
   element.className = `message ${role}${error ? " error" : ""}`;
-  if (role === 'assistant') renderMarkdown(element, content); else element.textContent = content;
+  if (clarification) {
+    element.className = 'message clarification';
+    const label = document.createElement('span'); label.className = 'clarification-label'; label.textContent = 'Answered';
+    const question = document.createElement('div'); question.className = 'clarification-question'; question.textContent = clarification.question;
+    const answer = document.createElement('div'); answer.className = 'clarification-answer'; answer.textContent = clarification.answer;
+    element.append(label, question, answer);
+  } else if (role === 'assistant') renderMarkdown(element, content); else element.textContent = content;
+  chatScroll.update(() => chat.append(element));
+  return element;
+}
+
+function appendUsage(usage?: UsageSummary, running = false, incomplete = false) {
+  const element = document.createElement('div');
+  renderUsage(element, usage, running, incomplete);
   chatScroll.update(() => chat.append(element));
   return element;
 }

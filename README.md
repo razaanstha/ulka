@@ -35,6 +35,14 @@ After rebuilding code, reload the extension **and refresh existing web pages** t
 
 The default **fx + Jev** engine requires WebAssembly JSPI. If unsupported, select **Classic** in advanced settings. WASM is bundled at build time; it is not fetched as executable code at runtime.
 
+### WebMCP (FX)
+
+FX observations discover native WebMCP tools through `document.modelContext` (or the compatible `navigator.modelContext` alias). FX is instructed to prefer relevant website tools over equivalent UI actions; unsupported browsers and pages retain the existing Jev browser controls. No browser flags or permissions are changed automatically. Classic remains UI-only.
+
+The initial integration supports tools registered in the task's main document, not iframe tools, remote MCP servers, page polyfills, or the older `modelContextTesting` API. Discovery runs in an isolated world and bounds metadata size. Each call requires approval with the website, tool name, and arguments, regardless of site-provided read-only hints. Handles are document-scoped, revalidated after approval, and consumed before invocation. Failed or interrupted executions stop the run rather than replaying potentially successful writes through another path. Successful calls still go through the final completion check. Tool metadata and output remain untrusted website content.
+
+Rebuild and reload Ulka to enable this path. Native browser/site availability is feature-detected; integration tests use a mocked native API, not a live-site certification. API reference: [WebMCP draft](https://webmachinelearning.github.io/webmcp/).
+
 ## Background tasks
 
 Choose **Settings → Tab behavior → Background** before starting a task. Start on the tab Ulka should use, then switch to another tab to keep browsing. Ulka keeps its task target, creates inactive tabs, and switches its own target without activating tabs. The setting applies to both engines and is fixed for each running task. Keep the side panel open for progress and approvals. Foreground remains the default.
@@ -43,11 +51,12 @@ Background mode uses the original task tab, not a duplicate. Some sites may paus
 
 ## Models and capabilities
 
-- Language model: `zai/glm-5.2-fast`, configured in `apps/extension/src/agent/models.ts`.
+- Language model: `deepseek/deepseek-v4.1-flash`, configured in `apps/extension/src/agent/models.ts`.
 - Action selection: `typesafe-ai/jev`, configured in `apps/extension/src/agent/vercel-jev.ts`.
+- FX browsing skill: [`web-browsing/SKILL.md`](apps/extension/src/agent/skills/web-browsing/SKILL.md), bundled into the runtime prompt. Edit this file to maintain research, interaction, recovery, and evidence guidance; rebuild and reload the extension afterward. Classic retains its existing planner and Jev rules.
 - Model availability and usage costs depend on Gateway and its providers. No subscriptions or credits are included.
 
-Supported tools include page reading, typing, clicks, keyboard input, scrolling, navigation, tab creation/switching/grouping, download-link clicks, and download metadata. Conversations are saved locally. Streamed answers support Markdown; exposed reasoning is shown separately when available.
+Supported tools include page reading, typing, clicks, keyboard input, scrolling, navigation, tab creation/switching/closing/grouping, download-link clicks, and download metadata. Native tab closing requires a prior inventory and the existing close approval, verifies the requested tabs disappeared, and keeps one tab open in the window. Background mode protects the visible and current task tabs. Conversations are saved locally. Streamed answers support Markdown; exposed reasoning is shown separately when available.
 
 Accessibility semantics drive observation; DOM nodes provide execution targets and last-moment validation. Disabled, occluded, and offscreen accessibility controls remain context without executable actions. Diagnostics report `accessibility` or `dom-fallback` when Chromium cannot provide a tree. There are no dedicated Facebook, X, or flight-booking scripts. Iframes, shadow DOM, complex widgets, browser-internal pages, and native browser menus have limited or no support. Verification is model-based, not proof that a task succeeded. Stop or Take over cancels the run; it does not undo completed actions.
 
@@ -82,10 +91,28 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Generated output and dependencies are ig
 
 Use settings → **Download logs** after a failure. Include reproduction steps, browser version, build ID, and expected versus actual behavior. Review logs before sharing: redaction is best-effort, and error/reason strings can include page-derived information. Never attach browser profiles, API keys, or private conversation exports.
 
-Each completed task logs `model_usage_summary`, with reported input/output tokens separated into FX turns, Jev evaluations, text generation, and verification (plus Classic planning/page answers when used). Missing provider usage is counted explicitly; totals are not a billing estimate and may exclude failed requests or provider-internal retries.
+Each reply shows reported input/output tokens and estimated USD cost underneath it, saved with chat history. Totals update as model usage arrives; FX planner usage arrives at the end of its turn, not token by token. Old chats without usage show unavailable. Interrupted runs, missing usage, and missing model prices are marked partial or unavailable.
+
+Cost uses the [Gateway public model catalog](https://vercel.com/docs/ai-gateway/models-and-providers), refreshed hourly while the worker remains active. These are estimates at input/output catalog rates, not bills: cache discounts, provider routing, extra fees, failed requests, and provider-internal retries can differ. Pricing lookup needs no API key or model call, and failure does not block browsing.
+
+Each completed task also logs `model_usage_summary`, separating FX turns, Jev evaluations, text generation, verification, and Classic planning/page answers. Missing provider usage is counted explicitly.
+
+Completion checks use low reasoning effort, an initial 1,200-token output cap, and no SDK retries. The harness retries a transient service error or invalid structured response once after 250ms using identical observations. Permanent errors and failed retries remain unverified and never replay browser actions. FX planning, Jev decisions, verification, and overall tasks have no harness time limits. Stop remains available; action-count and repeated-failure safeguards remain in place.
+
+Use `verification_start`, `verification_retry`, `verification_end`, and `verification_error` for input size, duration, usage, failure, and cancellation. `fx_turn_end` records tool time, reasoning/answer character counts, and time to first delta. Outside-tool time includes transport and FX overhead. Browser navigation waits, approval expiry, pricing lookups, and the standalone connection diagnostic retain their own bounded waits.
+
+The follow-up run completed two subgoal checks in 5 and 12 seconds, then timed out on a final check with 99,813 input characters. Verification now packs control rows and repeated grouping context into shared tables, preserving every observed control and chronological state change. Evidence stays valid JSON instead of being cut at 12,000 characters. Compare `rawInputChars` with `inputChars` in `verification_start` to measure compression. Timed-out verification requests now count as missing usage, not an apparent complete usage report. Field generation and its independent content review also use low reasoning effort and no SDK retries; `text_model_start/end/error` report their separate durations and usage without logging field content.
 
 `model_unavailable` / `system_overloaded` indicates a provider failure. A blocked result can also mean stale targets, missing approvals, unsuccessful verification, or a bounded retry/scroll limit. Automated tests do not establish live-site compatibility.
 
 ## License
 
 Ulka's original code, documentation, logo, and derived icons are licensed under the [MIT License](LICENSE). Dependencies retain their own licenses; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+The 17:02 diagnostic run stopped at verification with HTTP 405 (`isRetryable: false`), after browser actions succeeded. FX used Gateway streaming transport while structured helpers used non-streaming transport. Structured helpers now also stream internally, awaiting complete schema-validated output before returning. Original stream errors are preserved for retry classification; partial output never becomes a completion verdict. This transport change is regression-tested with a mocked Gateway; live provider confirmation is still required.
+
+The 17:10 run still returned HTTP 405 after switching to streaming, so streaming alone did not resolve the failure. Use **Help & diagnostics → Test model** to compare four synthetic requests in the extension service worker: FX-style headers, SDK plain output, SDK schema output, and SDK schema plus low reasoning. Checks run concurrently with 10-second deadlines and no SDK retries, consume API credits, and never read pages or perform browser actions. Results include safe transport metadata and a bounded, credential-redacted error response; copy diagnostics afterward. This is an isolation tool, not a confirmed provider fix.
+
+The 17:35 connection checks passed for DeepSeek V4.1 Flash, including structured output with low reasoning. Its real final verification instead failed JSON parsing after 24 seconds. Verification now allows one fresh attempt on invalid structured output using identical evidence and strict validation. A provider-confirmed `length` finish raises the retry output budget from 1,200 to 8,192 tokens; other malformed output keeps the original budget. Logs record finish reason, generated character count, and failed-generation usage without recording generated text. Browser actions are never replayed by this recovery. Earlier StepFun errors explicitly rejected `json_schema`; those are separate from the DeepSeek parsing failure.
+
+FX exposes `ask_user` for essential missing preferences, dates, or ambiguous targets. Questions support two to six choices plus custom text, or free text alone. The running task pauses without an answer deadline and resumes with its tool history and user clarification intact. Stop/Cancel task cancels the pending question; stale and empty replies are rejected. Reopening the panel restores the question while the same background worker remains alive. Browser/extension restarts do not persist running task execution. Clarifications do not replace action approvals or turn user answers into observed evidence.

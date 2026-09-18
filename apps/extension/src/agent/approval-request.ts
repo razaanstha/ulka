@@ -23,7 +23,7 @@ export function createApprovalRequest(decision: AgentDecision, snapshot: PageSna
 export function formatApprovalRequest(request: ApprovalRequest): string {
   const action = request.operation.toLowerCase().replaceAll('_', ' ');
   return `Allow ${action} on “${request.label}”?\nWebsite: ${request.origin}` +
-    (request.text === undefined ? '' : `\n\nText to enter:\n${request.text}`);
+    (request.text === undefined ? '' : `\n\n${request.operation === 'WEBMCP_CALL' ? 'Tool arguments' : 'Text to enter'}:\n${request.text}`);
 }
 
 // One pending action. Late responses cannot authorize a later request.

@@ -69,10 +69,11 @@ test('execution rejects changed accessibility semantics before any DOM action', 
 });
 
 
-test('focusable semantic containers remain actionable without pretending they are buttons', () => {
+test('focusable dialog stays context while its interactive header remains actionable', () => {
   const records = accessibilityRecords([
     { nodeId: 'root', backendDOMNodeId: 1, role: {value:'RootWebArea'}, properties:[{name:'focusable',value:{value:true}}] },
-    { nodeId: 'chat', role: {value:'dialog'}, name:{value:'Messaging'}, childIds:['header'] },
+    { nodeId: 'chat', backendDOMNodeId: 4, role: {value:'dialog'}, name:{value:'Messaging'}, childIds:['header'], properties:[{name:'focusable',value:{value:true}}] },
+    { nodeId: 'alert', backendDOMNodeId: 5, role: {value:'alertdialog'}, properties:[{name:'focusable',value:{value:true}}] },
     { nodeId: 'header', backendDOMNodeId: 2, role: {value:'banner'}, name:{value:'Raju Shrestha'}, properties:[{name:'focusable',value:{value:true}}] },
     { nodeId: 'plain', backendDOMNodeId: 3, role: {value:'generic'} },
   ]);

@@ -34,7 +34,7 @@ chromeApi.runtime.onMessage.addListener(raw => {
       button:focus-visible{outline-color:#9bccaa}
     }
     @media(prefers-reduced-motion:reduce){.orb,.edges{animation:none}}
-  </style><div class="edges" aria-hidden="true"></div><section class="card" aria-label="Ulka browser control"><span class="orb" aria-hidden="true"></span><div class="copy"><div class="title">Agent in progress</div><div class="detail" role="status">Working in your browser</div></div><div class="actions"><button data-action="stop" title="Cancel this task">Stop</button><button data-action="takeover" title="Cancel and return browser control to you">Take over ↗</button></div></section>`;
+  </style><div class="edges" aria-hidden="true"></div><section class="card" aria-label="Ulka browser control"><span class="orb" aria-hidden="true"></span><div class="copy"><div class="title">Agent in progress</div><div class="detail" role="status">Working in your browser</div></div><div class="actions"><button data-action="takeover" title="Cancel and return browser control to you">Take over</button></div></section>`;
   statusText = root.querySelector('[role=status]');
   if (message.detail) statusText!.textContent = message.detail;
   root.querySelectorAll<HTMLButtonElement>('button').forEach(button => button.addEventListener('click', async event => {

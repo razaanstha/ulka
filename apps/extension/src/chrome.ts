@@ -5,7 +5,7 @@ export interface ChromeApi {
   };
   tabs: {
     sendMessage(tabId: number, message: unknown): Promise<unknown>;
-    query(query: { active?: boolean; currentWindow?: boolean }): Promise<Array<{ id?: number; title?: string; url?: string; active?: boolean; status?: string; windowId?: number; groupId?: number }>>;
+    query(query: { active?: boolean; currentWindow?: boolean }): Promise<Array<{ id?: number; title?: string; url?: string; pendingUrl?: string; active?: boolean; status?: string; windowId?: number; groupId?: number }>>;
     group(options: { tabIds: number[] }): Promise<number>;
     ungroup(tabIds: number[]): Promise<void>;
     update(tabId: number, properties: { url?: string; active?: boolean }): Promise<unknown>;

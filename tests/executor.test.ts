@@ -72,7 +72,7 @@ test('Enter accepts combobox suggestion without clicking and collapsing popup', 
 });
 
 test('typing stops when click redirects focus or selecting the full value fails', async () => {
-  for (const checks of [[false], [true, false]]) {
+  for (const checks of [[false, false], [false, true, false]]) {
     const calls: string[] = [];
     const api = { attach: async () => {}, detach: async () => {}, sendCommand: async (_: unknown, method: string) => {
       calls.push(method);
@@ -83,4 +83,17 @@ test('typing stops when click redirects focus or selecting the full value fails'
     await expect(executor.execute(page, { operation: 'TYPE_TEXT', target: 'e1', confidence: 1 }, 'Oct 10')).rejects.toThrow(/focus|selected/);
     expect(calls).not.toContain('Input.insertText');
   }
+});
+
+test('typing into an already focused popup editor never clicks its toggle again', async () => {
+  const calls: Array<{ method: string; params: any }> = [];
+  const api = { attach: async () => {}, detach: async () => {}, sendCommand: async (_: unknown, method: string, params?: any) => {
+    calls.push({ method, params });
+    return { result: { value: true } };
+  } };
+  const page = { ...snapshot, guards: { e1: { nodeId: 2, role: 'combobox', label: 'Where to?', enabled: true, rect: { x: 0, y: 0, width: 20, height: 20 } } } };
+  const executor = new BrowserExecutor(api, { tabId: 1 }, { validateSnapshot: async () => true, validateTarget: async () => ({ x: 10, y: 10 }) } as never);
+  await executor.execute(page, { operation: 'TYPE_TEXT', target: 'e1', confidence: 1 }, 'Vienna');
+  expect(calls.filter(c => c.method === 'Input.dispatchMouseEvent')).toHaveLength(0);
+  expect(calls.find(c => c.method === 'Input.insertText')?.params.text).toBe('Vienna');
 });

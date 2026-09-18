@@ -1,6 +1,7 @@
+import { generateStructuredText, type StructuredRequest } from './structured-generation';
 import { currentTimeContext, TIME_RULES } from "./time-context";
 import type { UsageReporter } from "./model-usage";
-import { createGateway, generateText, Output } from "ai";
+import { createGateway, Output } from "ai";
 import { z } from "zod";
 import { LANGUAGE_MODEL } from "./models";
 
@@ -16,13 +17,13 @@ const intentSchema = z.object({
   navigationUrl: z.string().max(2_000).nullable(),
 }).refine((value) => !(value.shouldAct && value.shouldReadPage), { message: "Cannot act and read page simultaneously" });
 
-type GenerateFunction = (input: Parameters<typeof generateText>[0]) => Promise<{ output: ConversationIntent; usage?: unknown; totalUsage?: unknown }>;
+type GenerateFunction = (input: StructuredRequest) => Promise<{ output: ConversationIntent; usage?: unknown; totalUsage?: unknown }>;
 
 export class ConversationPlanner {
   private readonly generate: GenerateFunction;
   constructor(private readonly apiKey: string, generator?: GenerateFunction, private readonly reportUsage?: UsageReporter) {
     if (!apiKey.trim()) throw new Error("Vercel AI Gateway API key required");
-    this.generate = generator ?? (generateText as GenerateFunction);
+    this.generate = generator ?? (generateStructuredText as GenerateFunction);
   }
 
   async interpret(messages: ConversationMessage[]): Promise<ConversationIntent> {

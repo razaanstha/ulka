@@ -1,4 +1,5 @@
 import { TextTargetMismatchError, textGenerationContext } from './text-generator';
+import { VerificationUnavailableError } from './outcome-verifier';
 import type { ActionRecord, AgentDecision, PageSnapshot } from "../../../../packages/protocol/src/index";
 import { classifyAction } from "./approvals";
 import type { BrowserExecutor } from "./executor";
@@ -24,7 +25,7 @@ export interface TaskMemory {
   attempts: Map<string, number>;
   stateVisits?: Map<string, number>;
 }
-export interface AgentResult { status: "done" | "blocked" | "stopped"; reason?: string; history: ActionRecord[] }
+export interface AgentResult { status: "done" | "blocked" | "stopped"; reason?: string; failure?: 'verification_unavailable'; history: ActionRecord[] }
 
 export class AgentRunner {
   readonly history: ActionRecord[] = [];
@@ -135,6 +136,10 @@ export class AgentRunner {
         } catch (error) {
           if (error instanceof StaleDecisionError) {
             this.trace("stale", { message: error.message });
+            // A trigger may open a popup and transfer focus before any text is
+            // inserted. Re-observe and tell the model why the previous target
+            // failed rather than silently choosing the same trigger again.
+            feedback = { evidence: `Previous ${decision.operation} on ${target?.label ?? 'control'} was not completed: ${error.message}. Reinspect the current controls; if a popup opened, use its observed focused editor or options. No text may be assumed inserted.`, excludeDone: true };
             if (++staleAttempts >= 3) return this.blocked(`Repeated stale targets: ${error.message}. Re-observe or choose a different strategy.`);
             continue;
           }
@@ -181,6 +186,7 @@ export class AgentRunner {
       return this.stoppedResult();
     } catch (error) {
       if (this.stopped) return this.stoppedResult();
+      if (error instanceof VerificationUnavailableError) return { ...this.blocked(error.message), failure: 'verification_unavailable' };
       this.states.transition("ERROR");
       throw error;
     }

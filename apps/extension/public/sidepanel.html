@@ -5,17 +5,29 @@
   <title>Ulka</title><link rel="stylesheet" href="sidepanel.css"><link rel="stylesheet" href="chat.css">
 </head>
 <body>
-  <header><div class="brand"><h1>ulka</h1></div><button id="settings-toggle" aria-label="Settings" title="Settings" aria-expanded="false">···</button></header>
+  <header><div class="brand"><h1>ulka</h1></div><button id="settings-toggle" aria-label="Settings" title="Settings" aria-controls="settings" aria-expanded="false">···</button></header>
   <section id="settings" hidden aria-label="Settings">
-    <label for="api-key">Gateway API key</label><input id="api-key" type="password" autocomplete="off" placeholder="vck_…">
-    <button id="save-key">Save</button><span id="key-status" class="hint" role="status"></span>
-    <p class="hint">Saved only in this browser profile.</p>
-    <label for="task-mode">Tab behavior</label><select id="task-mode" aria-describedby="task-mode-hint"><option value="foreground">Foreground</option><option value="background">Background</option></select>
-    <p id="task-mode-hint" class="hint">Background: start on the tab you want Ulka to use, then browse elsewhere. New task tabs stay inactive. Keep this panel open for progress and approvals.</p>
-    <details><summary>Advanced</summary><label for="engine">Agent engine</label><select id="engine"><option value="fx">fx + Jev</option><option value="classic">Classic</option></select></details>
-    <details id="diagnostics"><summary>Help & diagnostics</summary><p class="hint">Review logs before sharing. They may contain page details.</p><button id="download-logs">Download logs</button><button id="copy-logs">Copy logs</button><p id="log-status" class="hint" role="status"></p><details><summary>Developer trace</summary><pre id="trace"></pre></details></details>
+    <div class="settings-heading"><strong>Settings</strong></div>
+    <div class="settings-model"><span>Model</span><code id="model-name"></code></div>
+    <div class="settings-group">
+      <label for="api-key">Gateway API key</label>
+      <div class="settings-key-row"><input id="api-key" type="password" autocomplete="off" placeholder="vck_…" aria-describedby="key-hint"><button id="save-key">Save</button></div>
+      <div class="settings-key-note"><p id="key-hint" class="hint">Saved in this browser.</p><span id="key-status" class="hint" role="status"></span></div>
+    </div>
+    <div class="settings-group">
+      <label for="task-mode">Tab behavior</label><select id="task-mode" aria-describedby="task-mode-hint"><option value="foreground">Foreground</option><option value="background">Background</option></select>
+      <p id="task-mode-hint" class="hint">Background keeps new tabs inactive. Start on your task tab and keep this panel open.</p>
+    </div>
+    <details class="settings-section"><summary>Advanced</summary><label for="engine">Agent engine</label><select id="engine"><option value="fx">fx + Jev</option><option value="classic">Classic</option></select></details>
+    <details id="diagnostics" class="settings-section"><summary>Help & diagnostics</summary>
+      <button id="test-model">Test model</button><p class="hint">Four small checks. Uses API credits; no browser actions.</p>
+      <div class="settings-log-actions"><button id="download-logs">Download logs</button><button id="copy-logs">Copy logs</button></div>
+      <p class="hint">Logs may contain page details. Review before sharing.</p>
+      <p id="log-status" class="hint" role="status"></p><details><summary>Developer trace</summary><pre id="trace"></pre></details>
+    </details>
   </section>
   <main id="chat" class="chat" role="log" aria-live="polite" aria-label="Conversation"><section id="welcome"><h2>What’s the task?</h2><p>Ask anything about your browser.</p></section></main>
+  <section id="user-question" hidden aria-label="Question from Ulka"></section>
   <footer>
     <div class="activity" role="status"><span class="dot"></span><span id="state">Ready</span><span id="elapsed"></span></div><p id="activity-detail" class="hint"></p>
     <div class="composer"><label for="prompt" class="sr-only">Message Ulka</label><textarea id="prompt" rows="1" placeholder="Message Ulka…"></textarea><div class="composer-bottom"><button id="stop" hidden aria-label="Stop current task">■ Stop</button><button id="send" aria-label="Send message">↑</button></div></div>

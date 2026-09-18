@@ -7,7 +7,7 @@ let runId = "startup";
 let started = Date.now();
 
 export function sanitize(value: unknown, key = "", secrets: string[] = []): unknown {
-  if (/^(text|value|currentValue|goal|content|messages|reply|evidence|title|label|targetLabel|authorization|apiKey|password|token)$/i.test(key)) return "[redacted]";
+  if (/^(question|answer|text|value|currentValue|goal|content|messages|reply|partialReply|evidence|title|label|targetLabel|authorization|apiKey|password|token)$/i.test(key)) return "[redacted]";
   if (value instanceof Error) return { name: value.name, message: sanitize(value.message, "message", secrets), stack: sanitize(value.stack, "stack", secrets) };
   if (typeof value === "string") {
     let clean = value;

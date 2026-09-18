@@ -11,14 +11,16 @@ const snapshot: PageSnapshot = {
 };
 
 describe("Vercel Gateway Jev engine", () => {
-  test('stalled evaluation times out even if transport ignores cancellation', async () => {
+  test('Stop cancels stalled evaluation even if transport ignores cancellation', async () => {
+    const controller = new AbortController();
     let requestSignal: AbortSignal | undefined;
     const evaluator = (input: any) => {
       requestSignal = input.abortSignal;
+      queueMicrotask(() => controller.abort(new Error('User stopped')));
       return new Promise<any>(() => {});
     };
-    const engine = new VercelJevDecisionEngine('test', evaluator, undefined, 10);
-    await expect(engine.decide('Continue', snapshot, [])).rejects.toThrow('timed out');
+    const engine = new VercelJevDecisionEngine('test', evaluator, controller.signal);
+    await expect(engine.decide('Continue', snapshot, [])).rejects.toThrow('User stopped');
     expect(requestSignal?.aborted).toBe(true);
   });
 
@@ -30,7 +32,7 @@ describe("Vercel Gateway Jev engine", () => {
       if (input.questions.target) { targetStarted(); return new Promise(() => {}); }
       return { answers: { operation: { type: 'choice', choice: 'CLICK', probabilities: Object.fromEntries(Object.keys(input.questions.operation.criteria).map(key => [key, key === 'CLICK' ? 1 : 0])) } } };
     };
-    const pending = new VercelJevDecisionEngine('test', evaluator, controller.signal, 1000).decide('Continue', { ...snapshot, elements: [...snapshot.elements, { ...snapshot.elements[0], id: 'e2' }] }, []);
+    const pending = new VercelJevDecisionEngine('test', evaluator, controller.signal).decide('Continue', { ...snapshot, elements: [...snapshot.elements, { ...snapshot.elements[0], id: 'e2' }] }, []);
     await started;
     controller.abort(new Error('Stopped by user'));
     await expect(pending).rejects.toThrow('Stopped by user');
@@ -165,7 +167,8 @@ test('model requests omit local metadata, retain compatibility, and report each 
     const choice = key === 'target' ? 'e2' : 'CLICK';
     return { usage: { inputTokens: 10, outputTokens: 1 }, answers: { [key]: { type: 'choice', choice, probabilities: Object.fromEntries(Object.keys(input.questions[key].criteria).map(id => [id, id === choice ? 1 : 0])) } } };
   };
-  await new VercelJevDecisionEngine('test', evaluator, undefined, 30000, (stage, usage) => reports.push({ stage, usage })).decide('Help', page, []);
+  await new VercelJevDecisionEngine('test', evaluator, undefined, (stage, usage) => reports.push({ stage, usage })).decide('Help', page, []);
+  expect(requests.map(r => r.providerOptions)).toEqual([undefined, undefined]);
   expect(requests[0].state.action_targets.CLICK).toEqual(['e1', 'e2']);
   expect(requests[0].state.elements[1]).toMatchObject({ id: 'e2', label: 'Help', selected: true });
   expect(JSON.stringify(requests.map(r => r.state))).not.toContain('nodeId');

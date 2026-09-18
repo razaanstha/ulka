@@ -68,9 +68,9 @@ body .composer textarea:focus-visible {
   outline: none;
   box-shadow: none;
 }
-.thinking-box{margin:12px 0;padding:12px 14px;border:1px solid #e7e7e7;border-radius:14px;background:#f6f6f6;color:#626262;font:12px/1.6 system-ui,sans-serif}
+.thinking-box{margin:12px 0;padding:12px 14px;border:1px solid var(--line);border-radius:14px;background:var(--soft);color:var(--muted);font:12px/1.6 system-ui,sans-serif}
 .thinking-box summary{cursor:pointer;font-weight:500;user-select:none}
-.thinking-box summary:focus-visible{outline:2px solid #777;outline-offset:4px;border-radius:4px}
+.thinking-box summary:focus-visible{outline:2px solid var(--focus);outline-offset:4px;border-radius:4px}
 .thinking-content{margin-top:10px;max-height:240px;overflow:auto;overflow-wrap:anywhere}
 .thinking-content p{margin:6px 0}
 .message.assistant table,.thinking-content table{display:block;max-width:100%;overflow-x:auto;border-collapse:collapse;margin:12px 0;font-size:12px}
@@ -141,7 +141,7 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 body button:hover { background: var(--hover); }
 body #send, body #approve { background: var(--action); color: var(--on-action); }
 body #send:hover, body #approve:hover { background: var(--green); color: var(--on-action); }
-body #settings, body #welcome button, body .thinking-box { background: var(--soft); color: var(--ink); border-color: var(--line); }
+body #settings, body #welcome button { background: var(--soft); color: var(--ink); border-color: var(--line); }
 body #history { background: var(--surface); border-color: var(--line); box-shadow: 0 16px 48px var(--shadow); }
 body #history input { background: var(--soft); color: var(--ink); border-color: var(--line); }
 body #history-toggle { border-color: var(--line); }
@@ -160,3 +160,71 @@ body .composer:focus-within { border-color: var(--focus); outline-color: var(--f
 body .dot { background: var(--muted); }
 body[data-busy=true] .dot { background: var(--green); }
 ::selection { background: var(--selected); color: var(--ink); }
+
+/* Reported task usage sits beneath each assistant reply, outside streamed Markdown. */
+.usage-summary { margin: -18px 0 28px; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+
+/* One live thought, with a persistent WAAPI spinner. */
+.thinking-latest { display: flex; align-items: flex-start; gap: 10px; min-height: 20px; }
+.thinking-spinner { flex: none; width: 14px; height: 14px; margin-top: 3px; border: 1.5px solid var(--line); border-top-color: var(--ink); border-radius: 50%; }
+.thinking-latest-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.thinking-latest-text > :first-child { margin-top: 0; }
+.thinking-latest-text > :last-child { margin-bottom: 0; }
+.thinking-latest.is-finished .thinking-spinner { border-color: var(--line); background: var(--line); transform: scale(.55); }
+
+
+#new-chat { display: grid; place-items: center; flex-shrink: 0; width: 44px; height: 44px; padding: 0; font-size: 30px; font-weight: 400; line-height: 1; border-radius: 12px; }
+
+/* Quiet, compact chat picker with a fixed search field and scrolling results. */
+#history-toggle { display: inline-flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 13px; border-radius: 12px; }
+.history-chevron { width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(45deg); transition: transform .15s; opacity: .65; }
+#history-toggle[aria-expanded=true] .history-chevron { transform: translateY(1px) rotate(225deg); }
+#history { left: auto; right: 14px; width: min(360px, calc(100vw - 28px)); max-height: min(520px, 70dvh); padding: 14px; border-radius: 16px; }
+.history-heading { margin: 0 3px 12px; }
+.history-heading strong { font-size: 13px; font-weight: 600; }
+.history-heading .hint { font-size: 10px; }
+#history input { padding: 10px 12px; margin-bottom: 8px; border-radius: 9px; font-size: 12px; }
+#history .history-entry { display: flex; align-items: center; gap: 12px; padding: 11px 10px; border-radius: 9px; }
+.history-entry-copy { display: block; flex: 1; min-width: 0; }
+.history-entry-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 500; }
+.history-entry-preview { font-size: 11px; margin-top: 3px; }
+.history-entry-indicator { flex: none; width: 16px; text-align: center; color: var(--muted); }
+body #history .history-entry[aria-current=true] { background: var(--selected); }
+#history .history-entry[aria-current=true] .history-entry-indicator { color: var(--green); }
+.history-note { margin: 10px 3px 0; padding-top: 10px; font-size: 10px; }
+
+.message.clarification { margin: 16px 0 24px; padding: 13px 15px; border: 1px solid var(--line); border-radius: 12px; background: var(--soft); white-space: pre-wrap; }
+.message.clarification::before { display: none; }
+.clarification-label { display: block; color: var(--muted); font-size: 10px; margin-bottom: 6px; }
+.clarification-question { font-size: 12px; color: var(--muted); }
+.clarification-answer { margin-top: 5px; font-size: 13px; font-weight: 500; color: var(--ink); }
+
+/* Keep header controls visually balanced with a shared hit-area height. */
+#new-chat, #settings-toggle { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; min-height: 36px; padding: 0; border-radius: 10px; line-height: 1; }
+#new-chat { font-size: 24px; font-weight: 400; }
+#settings-toggle { font-size: 22px; }
+#history-toggle { height: 36px; min-height: 36px; padding: 0 11px; border-radius: 10px; }
+
+/* Settings shares the chat picker's anchored surface and quiet controls. */
+body #settings { position: absolute; top: calc(100% - 2px); right: 14px; z-index: 10; width: min(360px, calc(100vw - 28px)); max-height: min(620px, 75dvh); padding: 16px; overflow-y: auto; overscroll-behavior: contain; background: var(--surface); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 16px 48px var(--shadow); }
+#settings-toggle[aria-expanded=true] { background: var(--hover); }
+.settings-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.settings-heading strong { font-size: 13px; font-weight: 600; }
+.settings-heading > span { color: var(--muted); font-size: 10px; }
+.settings-model { display: grid; gap: 4px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.settings-model > span { color: var(--muted); font-size: 11px; }
+.settings-model code { font: 11px/1.6 ui-monospace, monospace; color: var(--ink); overflow-wrap: anywhere; }
+#settings .settings-group { margin-top: 14px; }
+#settings label { margin: 0 0 6px; font-size: 12px; font-weight: 500; }
+#settings input, #settings select { margin: 0; min-width: 0; padding: 9px 10px; font-size: 12px; border-radius: 9px; background: var(--soft); }
+.settings-key-row { display: flex; align-items: center; gap: 6px; }
+.settings-key-row input { flex: 1; width: 0; }
+#settings button { font-size: 11px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; }
+#settings #save-key { background: var(--action); color: var(--on-action); flex-shrink: 0; }
+.settings-key-note { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+#settings .hint { font-size: 10px; line-height: 1.5; margin: 7px 0 0; color: var(--muted); }
+#settings .settings-section { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }
+#settings summary { font-size: 12px; padding: 2px 0; }
+#settings .settings-section[open] > summary { margin-bottom: 12px; }
+.settings-log-actions { display: flex; gap: 6px; margin-top: 12px; }
+#settings #log-status:empty { display: none; }

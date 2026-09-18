@@ -4,7 +4,7 @@ import { ConversationPlanner } from "../apps/extension/src/agent/conversation";
 describe("conversation planner", () => {
   test("uses current Gateway model and returns structured browser goal", async () => {
     const generator = async (input: any) => {
-      expect(input.model.modelId).toBe("zai/glm-5.2-fast");
+      expect(input.model.modelId).toBe("deepseek/deepseek-v4.1-flash");
       expect(input.providerOptions).toBeUndefined();
       expect(input.system).toContain("Current host time:");
       expect(input.system).toContain("timeZone");

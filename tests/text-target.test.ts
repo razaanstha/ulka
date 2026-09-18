@@ -57,6 +57,23 @@ test('approved field content is returned unchanged after independent review', as
   expect(await engine.generate('Draft a message asking Raju to review the attached schedule. Do not send.', page.elements[1], page, [])).toBe(candidate);
   expect(JSON.parse(requests[1].prompt).candidate).toBe(candidate);
   expect(stages).toEqual(['text_generation','text_content_review']);
+  expect(requests.every(request => request.reasoning === 'low' && request.maxRetries === 0)).toBe(true);
+});
+
+test('text generation and review expose separate costs without logging candidates', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const events: any[] = []; let calls = 0;
+  const request = async () => ({ output: ++calls === 1
+    ? { suitable: true, reason: 'Editor', text: 'Private draft' }
+    : { approved: true, reason: 'Approved' }, usage: { inputTokens: 10, outputTokens: 4 } });
+  const engine = new TextGenerator('test', undefined, undefined, request as never, (event, data) => events.push({ event, ...data }));
+  expect(await engine.generate('Draft message', page.elements[1], page, [])).toBe('Private draft');
+  expect(events.map(event => event.event)).toEqual(['text_model_start', 'text_model_end', 'text_model_start', 'text_model_end']);
+  expect(events.map(event => event.stage)).toEqual(['text_generation', 'text_generation', 'text_content_review', 'text_content_review']);
+  expect(events[1].requestId).toBe(events[0].requestId);
+  expect(events[3].requestId).toBe(events[2].requestId);
+  expect(events[1].elapsedMs).toBeGreaterThanOrEqual(0);
+  expect(JSON.stringify(events)).not.toContain('Private draft');
 });
 
 test('malformed content review fails closed', async () => {
