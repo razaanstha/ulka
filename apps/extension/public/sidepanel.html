@@ -10,6 +10,8 @@
     <label for="api-key">Gateway API key</label><input id="api-key" type="password" autocomplete="off" placeholder="vck_…">
     <button id="save-key">Save</button><span id="key-status" class="hint" role="status"></span>
     <p class="hint">Saved only in this browser profile.</p>
+    <label for="task-mode">Tab behavior</label><select id="task-mode" aria-describedby="task-mode-hint"><option value="foreground">Foreground</option><option value="background">Background</option></select>
+    <p id="task-mode-hint" class="hint">Background: start on the tab you want Ulka to use, then browse elsewhere. New task tabs stay inactive. Keep this panel open for progress and approvals.</p>
     <details><summary>Advanced</summary><label for="engine">Agent engine</label><select id="engine"><option value="fx">fx + Jev</option><option value="classic">Classic</option></select></details>
     <details id="diagnostics"><summary>Help & diagnostics</summary><p class="hint">Review logs before sharing. They may contain page details.</p><button id="download-logs">Download logs</button><button id="copy-logs">Copy logs</button><p id="log-status" class="hint" role="status"></p><details><summary>Developer trace</summary><pre id="trace"></pre></details></details>
   </section>

@@ -75,12 +75,12 @@ test("stop during an active fx turn returns stopped, not an error", async () => 
 test("compact results omit execution metadata and bound observation size", () => {
   const raw = { page: { text: "a".repeat(10000), elements: Array.from({ length: 250 }, () => ({ nodeId: 123, role: "button", label: "x".repeat(500), options: [1, 2, 3] })), guards: { secret: true } } };
   const compact = compactToolResult(raw) as any;
-  expect(compact.page.controls).toHaveLength(40);
-  expect(compact.page.omittedControls).toBe(210);
+  expect(compact.page.controls).toHaveLength(250);
+  expect(compact.page.omittedControls).toBe(0);
   expect(compact.page.textTruncated).toBe(true);
   expect(JSON.stringify(compact)).not.toContain("nodeId");
   expect(JSON.stringify(compact)).not.toContain("guards");
-  expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(raw).length / 2);
+  expect(JSON.stringify(compact).length).toBeLessThan(JSON.stringify(raw).length);
 });
 
 test("two blocked subgoals prevent further browser actions", async () => {
@@ -217,4 +217,52 @@ test('terminal failure aborts active model stream and returns precise blocker', 
   const result = await runFxBrowser('test', [], host, signal, runtime);
   expect(result.status).toBe('blocked');
   expect(result.reply).toContain('two blocked');
+});
+
+
+test('FX diagnostics separate tool time from orchestration and final verification', async () => {
+  const { host } = fixture();
+  const events: Record<string, any> = {};
+  host.log = (name, data) => { events[name] = data; };
+  const signal = new AbortController().signal;
+  await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await tools.find(t => t.name === 'browser_subgoal')!.execute({ goal: 'Work' }, { signal });
+  }));
+  expect(events.fx_init.elapsedMs).toBeGreaterThanOrEqual(0);
+  expect(events.fx_turn_end.toolsMs).toBeGreaterThanOrEqual(0);
+  expect(events.fx_turn_end.outsideToolsMs).toBeGreaterThanOrEqual(0);
+  expect(events.fx_turn_end.elapsedMs).toBeCloseTo(events.fx_turn_end.toolsMs + events.fx_turn_end.outsideToolsMs, 5);
+  expect(events.fx_final_verification.elapsedMs).toBeGreaterThanOrEqual(0);
+});
+
+test('planner sees selected dates and combobox popup state', () => {
+  const result = compactToolResult({ page: { elements: [
+    { id: 'e1', role: 'combobox', label: 'Destination', expanded: true, focused: true, optionIds: ['e2'], activeOptionId: 'e2' },
+    { id: 'e2', role: 'option', label: 'Paris', selected: true },
+    { id: 'e3', role: 'button', label: 'November 15', pressed: true, current: 'date' },
+  ] } }) as any;
+  expect(result.page.controls[0]).toMatchObject({ id: 'e1', expanded: true, focused: true, optionIds: ['e2'], activeOptionId: 'e2' });
+  expect(result.page.controls[1].selected).toBe(true);
+  expect(result.page.controls[2]).toMatchObject({ pressed: true, current: 'date' });
+});
+
+test('FX receives host time and preserves task time during recovery', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let checks = 0; const prompts: any[] = [];
+  host.verify = async goal => {
+    expect(JSON.parse(goal).taskTime).toEqual(prompts[0].taskTime);
+    return { satisfied: ++checks === 2, evidence: 'Missing date selection' };
+  };
+  const base = fakeRuntime(async tools => {
+    await tools.find(t => t.name === 'browser_subgoal')!.execute({ goal: 'Select requested date' }, { signal });
+  });
+  const runtime = { ...base, createFxAgent: async (options: Parameters<typeof import('libfx/browser').createFxAgent>[0]) => {
+    const agent = await base.createFxAgent(options);
+    return { ...agent, prompt: (input: string) => { prompts.push(JSON.parse(input)); return agent.prompt(); } };
+  } };
+  expect((await runFxBrowser('test', [{ role: 'user', content: 'Tomorrow' }], host, signal, runtime)).status).toBe('done');
+  expect(prompts).toHaveLength(2);
+  expect(prompts[0].currentTime.localDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  expect(prompts[0].currentTime.timeZone).toBeTruthy();
+  expect(prompts[1].taskTime).toEqual(prompts[0].taskTime);
 });

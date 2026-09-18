@@ -1,3 +1,4 @@
+import { ModelUsageLedger } from "./agent/model-usage";
 import { AgentRunner, type TaskMemory } from "./agent/agent-runner";
 import { ApprovalGate, createApprovalRequest } from './agent/approval-request';
 import { createTaskObserver } from "./agent/task-observer";
@@ -22,6 +23,8 @@ import type { PageSnapshot } from "../../../packages/protocol/src";
 let activeRunner: AgentRunner | undefined;
 let activeFx: AbortController | undefined;
 let busy = false;
+let usageLedger = new ModelUsageLedger();
+const reportUsage = (stage: string, usage: unknown) => { usageLedger.record(stage, usage); };
 const overlayTabs = new Set<number>();
 async function showOverlay(tabId: number) {
   overlayTabs.add(tabId);
@@ -45,26 +48,28 @@ chromeApi.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   if (busy) { sendResponse({ ok: false, error: "A task is already running. Stop it before starting another." }); return; }
   busy = true;
   beginLog(message.type);
+  usageLedger = new ModelUsageLedger();
   const task = message.type === "CHAT" ? chat(message.messages ?? []) : run(message.goal ?? "");
   void task
     .then(async (result) => { await log("result", result); sendResponse({ ok: true, result }); })
     .catch(async (error) => { await log("error", error); void chromeApi.runtime.sendMessage({ type: "STATE", state: "ERROR" }).catch(() => {}); sendResponse({ ok: false, error: error instanceof Error ? error.message : "Agent failed" }); })
-    .finally(async () => { await hideOverlays(); busy = false; });
+    .finally(async () => { await log("model_usage_summary", usageLedger.summary()); await hideOverlays(); busy = false; });
   return true;
 });
 
 async function chat(messages: ConversationMessage[]) {
-  const stored = await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaEngine"]);
+  const stored = await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaEngine", "ulkaBackground"]);
   const apiKey = stored.vercelAiGatewayApiKey;
   if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("Save Vercel AI Gateway API key first");
+  const background = stored.ulkaBackground === true;
   const [taskTab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
-  if (stored.ulkaEngine !== "classic") return fxChat(messages, apiKey, taskTab?.id);
+  if (stored.ulkaEngine !== "classic") return fxChat(messages, apiKey, taskTab?.id, background);
   void log("planner_start", { model: LANGUAGE_MODEL });
-  const intent = await new ConversationPlanner(apiKey).interpret(messages);
+  const intent = await new ConversationPlanner(apiKey, undefined, reportUsage).interpret(messages);
   void log("planner_result", intent);
   if (intent.shouldReadPage) {
-    const page = await observeActivePage();
-    const answer = await new PageAnswerer(apiKey).answer(messages, page);
+    const page = await observeTaskPage(taskTab?.id);
+    const answer = await new PageAnswerer(apiKey, undefined, reportUsage).answer(messages, page);
     return { reply: answer.answer, evidence: answer.evidence };
   }
   if (!intent.shouldAct) return { reply: intent.reply };
@@ -76,7 +81,7 @@ async function chat(messages: ConversationMessage[]) {
     await waitForNavigation(taskTab.id, () => chromeApi.tabs.query({}));
     void log("navigation_ready", { tabId: taskTab.id, continueTask: true });
   }
-  const result = await run(intent.goal, apiKey, taskTab?.id);
+  const result = await run(intent.goal, apiKey, taskTab?.id, undefined, undefined, background);
   const outcome = result.status === "done"
     ? "Done."
     : result.status === "stopped"
@@ -85,10 +90,10 @@ async function chat(messages: ConversationMessage[]) {
   return { reply: `${intent.reply} ${outcome}`.trim(), goal: intent.goal, result };
 }
 
-async function fxChat(messages: ConversationMessage[], apiKey: string, initialTabId?: number) {
+async function fxChat(messages: ConversationMessage[], apiKey: string, initialTabId?: number, background = false) {
   if (!initialTabId) throw new Error("No active tab");
   let taskTabId = initialTabId;
-  const nativeTabs = new NativeTabs(chromeApi);
+  const nativeTabs = new NativeTabs(chromeApi, background);
   const taskMemory: TaskMemory = { history: [], attempts: new Map() };
   const controller = new AbortController(); activeFx = controller;
   const timer = setTimeout(() => { controller.abort(new DOMException('Task time limit reached', 'TimeoutError')); activeRunner?.stop(); }, 180_000);
@@ -100,17 +105,18 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
     const { tabs } = await nativeTabs.list();
     const tab = tabs.find(item => item.id === taskTabId);
     if (!tab) throw new Error("Task tab was closed.");
-    if (!tab.url?.startsWith("http")) return { page: { url: tab.url, notice: "Internal browser page. Navigate to a website before observing its document." }, tabs };
+    if (!tab.url?.startsWith("http")) return { tabId: taskTabId, page: { url: tab.url, notice: "Internal browser page. Navigate to a website before observing its document." }, tabs };
     const browser = new AttachedBrowser(chromeApi.debugger, { tabId: taskTabId });
     await browser.attach();
     try {
       const page = await browser.observer.observe();
-      return { page: { url: page.url, title: page.title, text: page.text, elements: page.elements }, tabs };
+      return { tabId: taskTabId, page: { url: page.url, title: page.title, text: page.text, elements: page.elements }, tabs };
     } finally { await browser.detach(); }
   };
   try {
-    void log("fx_start", { model: LANGUAGE_MODEL });
+    void log("fx_start", { model: LANGUAGE_MODEL, background });
     const result = await runFxBrowser(apiKey, messages, {
+      background,
       listDownloads: async input => {
         controller.signal.throwIfAborted();
         return listDownloads(chromeApi.downloads, input);
@@ -136,7 +142,7 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
         controller.signal.throwIfAborted();
         const url = validateNavigationUrl(value);
         if (newTab) {
-          const created = await chromeApi.tabs.create({ url, active: true });
+          const created = await chromeApi.tabs.create({ url, active: !background });
           if (!created.id) throw new Error("Could not create tab"); taskTabId = created.id;
         } else await chromeApi.tabs.update(taskTabId, { url });
         await waitForNavigation(taskTabId, () => chromeApi.tabs.query({}));
@@ -144,7 +150,7 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
       },
       act: async (goal, signal) => {
         controller.signal.throwIfAborted(); signal.throwIfAborted();
-        const result = await run(goal, apiKey, taskTabId, signal, taskMemory);
+        const result = await run(goal, apiKey, taskTabId, signal, taskMemory, background);
         taskTabId = result.tabId;
         return { ...result, observation: await observe() };
       },
@@ -152,10 +158,13 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
         controller.signal.throwIfAborted();
         const browser = new AttachedBrowser(chromeApi.debugger, { tabId: taskTabId });
         await browser.attach();
-        try { return await new OutcomeVerifier(apiKey, controller.signal).verify(goal, await browser.observer.observe(), [], evidence); }
+        try { return await new OutcomeVerifier(apiKey, controller.signal, reportUsage).verify(goal, await browser.observer.observe(), [], evidence); }
         finally { await browser.detach(); }
       },
-      log: (event, data) => { void log(event, data); },
+      log: (event, data) => {
+        if (event === "fx_turn_end") reportUsage("fx_turn", (data as { usage?: unknown }).usage);
+        void log(event, data);
+      },
       progress: text => { void chromeApi.runtime.sendMessage({ type: "FX_PROGRESS", text }).catch(() => {}); },
       reasoning: text => { void chromeApi.runtime.sendMessage({ type: "FX_REASONING", text }).catch(() => {}); },
     }, controller.signal);
@@ -164,8 +173,8 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
   } finally { clearTimeout(timer); clearInterval(keepAlive); activeFx = undefined; }
 }
 
-async function observeActivePage(): Promise<PageSnapshot> {
-  const [tab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
+async function observeTaskPage(tabId?: number): Promise<PageSnapshot> {
+  const tab = (await chromeApi.tabs.query({})).find(tab => tab.id === tabId);
   if (!tab?.id) throw new Error("No active tab");
   const browser = new AttachedBrowser(chromeApi.debugger, { tabId: tab.id });
   await browser.attach();
@@ -178,9 +187,10 @@ export function validateNavigationUrl(value: string): string {
   return url.toString();
 }
 
-async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, signal?: AbortSignal, taskMemory?: TaskMemory) {
+async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, signal?: AbortSignal, taskMemory?: TaskMemory, backgroundMode?: boolean) {
   if (!goal.trim()) throw new Error("Goal required");
-  const stored = suppliedApiKey ? {} : await chromeApi.storage.local.get("vercelAiGatewayApiKey");
+  const stored = suppliedApiKey ? {} : await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaBackground"]);
+  const background = backgroundMode ?? stored.ulkaBackground === true;
   const apiKey = suppliedApiKey ?? stored.vercelAiGatewayApiKey;
   if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("Save Vercel AI Gateway API key first");
   activeRunner?.stop();
@@ -188,9 +198,14 @@ async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, si
   if (!tab?.id) throw new Error("No active tab");
   let browser!: AttachedBrowser;
   const tabController = {
-    open: async () => { const created = await chromeApi.tabs.create({ url: "about:blank", active: true }); if (!created.id) throw new Error("Chrome did not create tab"); await browser.switchTo(created.id); },
-    switch: async (tabId: number) => { await chromeApi.tabs.update(tabId, { active: true }); await browser.switchTo(tabId); },
+    open: async () => { const created = await chromeApi.tabs.create({ url: "about:blank", active: !background }); if (!created.id) throw new Error("Chrome did not create tab"); await browser.switchTo(created.id); },
+    switch: async (tabId: number) => { if (!background) await chromeApi.tabs.update(tabId, { active: true }); await browser.switchTo(tabId); },
     close: async (tabId: number) => {
+      if (background) {
+        const tabs = await chromeApi.tabs.query({});
+        if (tabs.some(tab => tab.id === tabId && tab.active)) throw new Error("Cannot close the visible tab in background mode. Switch tabs or use foreground mode.");
+        if (browser.tabId === tabId) throw new Error("Switch the task to another tab before closing its current tab in background mode.");
+      }
       const closingCurrent = browser.tabId === tabId; if (closingCurrent) await browser.detach(); await chromeApi.tabs.remove(tabId);
       if (closingCurrent) { const [next] = await chromeApi.tabs.query({ active: true, currentWindow: true }); if (!next?.id) throw new Error("No tab remains"); await browser.switchTo(next.id); }
     },
@@ -205,7 +220,7 @@ async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, si
       () => chromeApi.tabs.query({ currentWindow: true }),
       () => showOverlay(browser.tabId));
     const requests = new AbortController();
-    const runner = new AgentRunner(observer, new VercelJevDecisionEngine(apiKey, undefined, requests.signal), browser.executor, states, {
+    const runner = new AgentRunner(observer, new VercelJevDecisionEngine(apiKey, undefined, requests.signal, 30_000, reportUsage), browser.executor, states, {
       cancelRequests: () => requests.abort(),
       taskMemory,
       maxActions: signal ? 8 : 30,
@@ -219,7 +234,7 @@ async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, si
           void chromeApi.runtime.sendMessage({ type: 'APPROVAL_CLOSED', approvalId: request.id }).catch(() => {});
         }
       },
-    }, new TextGenerator(apiKey, requests.signal), new OutcomeVerifier(apiKey, requests.signal));
+    }, new TextGenerator(apiKey, requests.signal, reportUsage), new OutcomeVerifier(apiKey, requests.signal, reportUsage));
     activeRunner = runner;
     const stop = () => { runner.stop(); approvalGate.cancel(); };
     signal?.addEventListener("abort", stop, { once: true });

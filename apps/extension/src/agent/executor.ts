@@ -1,6 +1,7 @@
 import type { AgentDecision, PageSnapshot } from "../../../../packages/protocol/src/index";
 import type { ChromeDebuggerApi, Debuggee } from "./cdp";
 import { FreshnessValidator, StaleDecisionError } from "./freshness";
+import { VISIBILITY_HELPERS } from './visibility';
 import { evaluate } from "./cdp";
 
 export interface TabController {
@@ -40,9 +41,8 @@ export class BrowserExecutor {
         if (id === null) return {x: innerWidth / 2, y: innerHeight / 2};
         const e = window.__ulkaAgent?.nodes.get(id);
         if (!e?.isConnected || Math.abs(e.scrollTop - ${snapshot.scrollTarget?.y ?? 0}) > 2) return null;
-        const r = e.getBoundingClientRect(), x = (Math.max(0,r.left)+Math.min(innerWidth,r.right))/2, y = (Math.max(0,r.top)+Math.min(innerHeight,r.bottom))/2;
-        const hit = document.elementFromPoint(x,y);
-        return hit && (hit===e || e.contains(hit)) ? {x,y} : null;
+        ${VISIBILITY_HELPERS}
+        return visible(e) ? interactionPoint(e) : null;
       })()`);
       if (!point) throw new StaleDecisionError("Scroll container changed or is covered");
       await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mouseWheel", ...point, deltaY: decision.operation === "SCROLL_DOWN" ? 560 : -560, deltaX: 0 }); return;
@@ -62,34 +62,52 @@ export class BrowserExecutor {
     if (decision.operation === 'SCROLL_ELEMENT_DOWN' || decision.operation === 'SCROLL_ELEMENT_UP') {
       await this.api.sendCommand(this.target, 'Input.dispatchMouseEvent', { type: 'mouseWheel', ...point, deltaX: 0, deltaY: decision.operation === 'SCROLL_ELEMENT_DOWN' ? 420 : -420 }); return;
     }
-    if (['ARROW_DOWN','ARROW_UP','PRESS_ESCAPE'].includes(decision.operation)) {
-      // Focus without clicking: Escape must not activate the control it dismisses.
-      const focused = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!e?.isConnected) return false; e.focus({preventScroll:true}); return document.activeElement===e; })()`);
+    if (['ARROW_DOWN','ARROW_UP','PRESS_ESCAPE','PRESS_ENTER'].includes(decision.operation)) {
+      // Focus without clicking: clicking again can collapse a combobox or reset its active suggestion.
+      const focused = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!e?.isConnected) return false; if (e.ownerDocument.activeElement!==e) e.focus({preventScroll:true}); return e.ownerDocument.activeElement===e; })()`);
       if (!focused) throw new StaleDecisionError('Control could not receive keyboard focus');
-      const key = decision.operation === 'ARROW_DOWN' ? 'ArrowDown' : decision.operation === 'ARROW_UP' ? 'ArrowUp' : 'Escape';
+      const key = decision.operation === 'ARROW_DOWN' ? 'ArrowDown' : decision.operation === 'ARROW_UP' ? 'ArrowUp' : decision.operation === 'PRESS_ENTER' ? 'Enter' : 'Escape';
       await this.api.sendCommand(this.target, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key });
       await this.api.sendCommand(this.target, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }); return;
     }
     if (decision.operation === "SELECT") {
       const option = Number(decision.option);
-      const changed = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!(e instanceof HTMLSelectElement) || !e.options[${option}] || e.options[${option}].disabled) return false; e.selectedIndex=${option}; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); return true; })()`);
+      const changed = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!(e?.tagName === 'SELECT') || !e.options[${option}] || e.options[${option}].disabled) return false; e.selectedIndex=${option}; e.dispatchEvent(new e.ownerDocument.defaultView.Event('input',{bubbles:true})); e.dispatchEvent(new e.ownerDocument.defaultView.Event('change',{bubbles:true})); return true; })()`);
       if (!changed) throw new StaleDecisionError("Select option unavailable: " + decision.option); return;
     }
     await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
     await this.api.sendCommand(this.target, "Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
-    if (decision.operation === "PRESS_ENTER" || decision.operation === "PRESS_ESCAPE") {
-      const key = decision.operation === "PRESS_ENTER" ? "Enter" : "Escape";
-      await this.api.sendCommand(this.target, "Input.dispatchKeyEvent", { type: "keyDown", key, code: key });
-      await this.api.sendCommand(this.target, "Input.dispatchKeyEvent", { type: "keyUp", key, code: key }); return;
-    }
     if (decision.operation === "TYPE_TEXT") {
       if (!text) throw new Error("TYPE_TEXT requires generated text");
+      // Clicking a date/search field can open a popup and focus a replacement.
+      // Never deliver generated text to whichever control happens to be active.
+      const stillFocused = await evaluate<boolean>(this.api, this.target, `(() => {
+        const e = window.__ulkaAgent?.nodes.get(${guard.nodeId});
+        if (!e?.isConnected) return false;
+        return e.getRootNode().activeElement === e;
+      })()`);
+      if (!stillFocused) throw new StaleDecisionError('Typing target lost focus or changed after click; observe the new field before typing');
       const element = snapshot.elements.find((item) => item.id === baseTarget);
       if (["date", "time", "month", "week"].includes(element?.inputType ?? "")) {
-        const changed = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!(e instanceof HTMLInputElement) || !['date','time','month','week'].includes(e.type)) return false; e.value=${JSON.stringify(text)}; e.dispatchEvent(new Event('input',{bubbles:true})); e.dispatchEvent(new Event('change',{bubbles:true})); return e.value===${JSON.stringify(text)}; })()`);
+        const changed = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!(e?.tagName === 'INPUT') || !['date','time','month','week'].includes(e.type)) return false; e.value=${JSON.stringify(text)}; e.dispatchEvent(new e.ownerDocument.defaultView.Event('input',{bubbles:true})); e.dispatchEvent(new e.ownerDocument.defaultView.Event('change',{bubbles:true})); return e.value===${JSON.stringify(text)}; })()`);
         if (!changed) throw new Error("Generated value is invalid for native date/time field"); return;
       }
-      await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!e) return false; if (typeof e.select==='function') e.select(); else { const r=document.createRange(); r.selectNodeContents(e); const s=getSelection(); s.removeAllRanges(); s.addRange(r); } return true; })()`);
+      const selected = await evaluate<boolean>(this.api, this.target, `(() => {
+        const e=window.__ulkaAgent?.nodes.get(${guard.nodeId});
+        if (!e?.isConnected || e.getRootNode().activeElement !== e) return false;
+        if (typeof e.select==='function') {
+          e.select();
+          if (typeof e.selectionStart === 'number' && (e.selectionStart !== 0 || e.selectionEnd !== e.value.length)) return false;
+        } else {
+          const r=e.ownerDocument.createRange(); r.selectNodeContents(e);
+          const s=e.getRootNode().getSelection?.() || e.ownerDocument.getSelection();
+          if (!s) return false;
+          s.removeAllRanges(); s.addRange(r);
+          if (s.toString() !== r.toString()) return false;
+        }
+        return e.isConnected && e.getRootNode().activeElement === e;
+      })()`);
+      if (!selected) throw new StaleDecisionError('Typing target changed or full value could not be selected; no text inserted');
       await this.api.sendCommand(this.target, "Input.insertText", { text });
       await new Promise((resolve) => setTimeout(resolve, 200));
     }

@@ -257,3 +257,36 @@ test('unrelated text and changing element positions cannot reset control retry b
   expect((await runner.run('Choose location')).reason).toContain('Repeated action');
   expect(actions).toBe(4);
 });
+
+
+test('next decision reuses settled post-action observation without another scan', async () => {
+  let scans = 0, decisions = 0;
+  const before = makeSnapshot('before'), after = makeSnapshot('after');
+  const runner = new AgentRunner({
+    observe: async () => { scans++; return before; },
+    waitForChange: async () => after,
+  }, { decide: async (_goal, page) => {
+    if (++decisions === 1) return { operation: 'CLICK', target: 'e1', confidence: 1 };
+    expect(page).toBe(after);
+    return { operation: 'DONE', confidence: 1 };
+  } }, { execute: async () => {} } as never, undefined, {}, undefined,
+  { verify: async () => ({ satisfied: true, evidence: 'Observed outcome' }) });
+  expect((await runner.run('Open About')).status).toBe('done');
+  expect(scans).toBe(1);
+});
+
+test('page-state cycles remain bounded across separate subgoals', async () => {
+  const memory = { history: [] as any[], attempts: new Map<string, number>() };
+  let actions = 0;
+  let last: any;
+  for (let i = 0; i < 6; i++) {
+    const observer = { observe: async () => ({ ...makeSnapshot(String(actions)), text: actions % 2 ? 'Calendar open' : 'Calendar closed', elements: [{ ...makeSnapshot('x').elements[0], operations: ['PRESS_ESCAPE' as const] }] }) };
+    const runner = new AgentRunner(observer as never,
+      { decide: async () => ({ operation: 'PRESS_ESCAPE', target: 'e1', confidence: 1 }) },
+      { execute: async () => { actions++; } } as never, undefined, { taskMemory: memory, maxActions: 1 });
+    last = await runner.run('Select date');
+    if (last.reason?.includes('page-state cycle')) break;
+  }
+  expect(last.reason).toContain('page-state cycle');
+  expect(actions).toBeLessThanOrEqual(6);
+});

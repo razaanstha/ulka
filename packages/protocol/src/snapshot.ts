@@ -13,10 +13,21 @@ export interface PageElement {
   role: string;
   label: string;
   value?: string;
+  valueTruncated?: boolean;
+  valueLength?: number;
   inputType?: string;
   checked?: boolean;
   selected?: boolean;
   expanded?: boolean;
+  pressed?: boolean;
+  current?: string;
+  focused?: boolean;
+  multiline?: boolean;
+  availability?: 'offscreen' | 'occluded' | 'disabled';
+  context?: Array<{ id: string; role: string; label?: string; heading?: string }>;
+  container?: { role: string; selected?: boolean; groupRole?: string; groupLabel?: string };
+  optionIds?: string[];
+  activeOptionId?: string;
   operations: AgentOperation[];
   options?: Array<{ id: string; label: string; value: string }>;
 }
@@ -32,13 +43,14 @@ export interface PageSnapshot {
   scrollTarget?: { nodeId: number; y: number; height: number; viewportHeight: number };
   elements: PageElement[];
   guards: Record<string, TargetGuard>;
-  diagnostics?: { modalScoped: boolean; candidates: number; rejected: Record<string, number>; iframeCount: number };
+  diagnostics?: { modalScoped: boolean; candidates: number; rejected: Record<string, number>; iframeCount: number; source?: 'accessibility' | 'dom-fallback'; axNodes?: number; unmapped?: number };
   tabs?: Array<{ id: string; title: string; url: string; active: boolean }>;
   tabRefs?: Record<string, number>;
   createdAt: number;
 }
 
 export interface TargetGuard {
+  accessibility?: { backendNodeId: number; role: string; name: string };
   nodeId: number;
   role: string;
   label: string;

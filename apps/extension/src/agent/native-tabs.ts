@@ -2,7 +2,7 @@ import type { ChromeApi } from '../chrome';
 
 export class NativeTabs {
   private observed = new Set<number>();
-  constructor(private api: Pick<ChromeApi, 'tabs' | 'tabGroups'>) {}
+  constructor(private api: Pick<ChromeApi, 'tabs' | 'tabGroups'>, private readonly background = false) {}
   async list() {
     const tabs = await this.api.tabs.query({ currentWindow: true });
     this.observed = new Set(tabs.flatMap(tab => tab.id === undefined ? [] : [tab.id]));
@@ -14,7 +14,7 @@ export class NativeTabs {
     if (input.operation === 'create') {
       const url = input.url ? new URL(input.url) : undefined;
       if (url && (url.protocol !== 'https:' || url.username || url.password)) throw new Error('Only HTTPS URLs or an empty new tab are supported');
-      const tab = await this.api.tabs.create({ url: url?.href ?? 'about:blank', active: true });
+      const tab = await this.api.tabs.create({ url: url?.href ?? 'about:blank', active: !this.background });
       if (!tab.id) throw new Error('Tab creation failed');
       const inventory = await this.list();
       if (!inventory.tabs.some(item => item.id === tab.id)) throw new Error('Created tab could not be verified');
@@ -25,9 +25,9 @@ export class NativeTabs {
     if (!ids.length || ids.some(id => !this.observed.has(id) || !current.some(tab => tab.id === id))) throw new Error('List tabs first; requested tab is unavailable or unobserved');
     if (input.operation === 'switch') {
       if (ids.length !== 1) throw new Error('Switch requires exactly one tab');
-      await this.api.tabs.update(ids[0], { active: true });
+      if (!this.background) await this.api.tabs.update(ids[0], { active: true });
       const inventory = await this.list();
-      if (!inventory.tabs.some(tab => tab.id === ids[0] && tab.active)) throw new Error('Tab switch not verified');
+      if (!inventory.tabs.some(tab => tab.id === ids[0] && (this.background || tab.active))) throw new Error('Tab switch not verified');
       return { status: 'done', taskTabId: ids[0], ...inventory };
     }
     if (input.operation === 'group') {

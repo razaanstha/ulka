@@ -58,3 +58,29 @@ test("stale scroll decision executes no wheel input", async () => {
   await expect(executor.execute(snapshot, { operation: "SCROLL_DOWN", confidence: 1 })).rejects.toThrow("Page changed");
   expect(commands).toBe(0);
 });
+
+test('Enter accepts combobox suggestion without clicking and collapsing popup', async () => {
+  const calls: any[] = [];
+  const api = { attach: async () => {}, detach: async () => {}, sendCommand: async (_target: unknown, method: string, params?: any) => {
+    calls.push({ method, ...params }); return { result: { value: true } };
+  } };
+  const page = { ...snapshot, guards: { e1: { nodeId: 1, role: 'combobox', label: 'Destination', enabled: true, rect: { x: 0, y: 0, width: 20, height: 20 } } } };
+  const executor = new BrowserExecutor(api, { tabId: 1 }, { validateSnapshot: async () => true, validateTarget: async () => ({ x: 10, y: 10 }) } as never);
+  await executor.execute(page, { operation: 'PRESS_ENTER', target: 'e1', confidence: 1 });
+  expect(calls.some(call => call.method === 'Input.dispatchMouseEvent')).toBe(false);
+  expect(calls.filter(call => call.method === 'Input.dispatchKeyEvent').map(call => [call.type, call.key])).toEqual([['keyDown', 'Enter'], ['keyUp', 'Enter']]);
+});
+
+test('typing stops when click redirects focus or selecting the full value fails', async () => {
+  for (const checks of [[false], [true, false]]) {
+    const calls: string[] = [];
+    const api = { attach: async () => {}, detach: async () => {}, sendCommand: async (_: unknown, method: string) => {
+      calls.push(method);
+      return method === 'Runtime.evaluate' ? { result: { value: checks.shift() } } : {};
+    } };
+    const page = { ...snapshot, guards: { e1: { nodeId: 1, role: 'textbox', label: 'Return', enabled: true, rect: { x: 0, y: 0, width: 20, height: 20 } } } };
+    const executor = new BrowserExecutor(api, { tabId: 1 }, { validateSnapshot: async () => true, validateTarget: async () => ({ x: 10, y: 10 }) } as never);
+    await expect(executor.execute(page, { operation: 'TYPE_TEXT', target: 'e1', confidence: 1 }, 'Oct 10')).rejects.toThrow(/focus|selected/);
+    expect(calls).not.toContain('Input.insertText');
+  }
+});

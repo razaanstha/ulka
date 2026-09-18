@@ -19,6 +19,34 @@ function page() {
 }
 
 describe("observer DOM integration", () => {
+  test("preserves conversation and form relationships for rich-text message editors", () => {
+    const window = page();
+    window.document.body.innerHTML = `
+      <div role="dialog" aria-label="Messaging">
+        <h2>New message</h2>
+        <button>Remove Raju Shrestha</button>
+        <input role="combobox" aria-label="Enter message recipients">
+        <form><div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Write a message…"><p><br></p></div><button>Send</button></form>
+      </div>
+      <div role="dialog" aria-label="Messaging"><h2>Other conversation</h2>
+        <form><div contenteditable="true" role="textbox" aria-multiline="true" aria-label="Write a message…"></div></form>
+      </div>`;
+    const snapshot = window.eval(OBSERVER_EXPRESSION);
+    const recipient = snapshot.elements.find((e: any) => e.role === 'combobox');
+    const editors = snapshot.elements.filter((e: any) => e.label === 'Write a message…');
+    const send = snapshot.elements.find((e: any) => e.label === 'Send');
+    expect(editors).toHaveLength(2);
+    expect(editors[0].operations).toContain('TYPE_TEXT');
+    expect(editors[0].multiline).toBe(true);
+    expect(editors[0].context).toEqual([
+      { id: recipient.context[0].id, role: 'dialog', label: 'Messaging', heading: 'New message' },
+      { id: send.context[1].id, role: 'form' },
+    ]);
+    expect(editors[1].context[0].id).not.toBe(editors[0].context[0].id);
+    expect(editors[1].context[0].heading).toBe('Other conversation');
+    expect(window.eval(targetValidationExpression(snapshot.guards[editors[0].id])).valid).toBe(true);
+  });
+
   test("uses the visible portion of a partially offscreen button", () => {
     const window = page();
     window.document.body.innerHTML = '<button>Add a note</button>';
@@ -172,4 +200,93 @@ test('observer exposes expanded and selected control state for loop detection', 
   button.setAttribute('aria-selected', 'true');
   const after = window.eval(OBSERVER_EXPRESSION);
   expect(after.elements[0]).toMatchObject({ expanded: true, selected: true, nodeId: before.elements[0].nodeId });
+});
+
+test('native link with presentation role passes freshness until actionable role changes', () => {
+  for (const role of ['none', 'presentation']) {
+    const window = page();
+    window.document.body.innerHTML = `<a href="/profile" role="${role}">Profile result</a>`;
+    const snapshot = window.eval(OBSERVER_EXPRESSION);
+    expect(snapshot.elements[0].role).toBe('link');
+    const expression = targetValidationExpression(snapshot.guards.e1);
+    expect(window.eval(expression).valid).toBe(true);
+    window.document.querySelector('a')!.setAttribute('role', 'button');
+    expect(window.eval(expression).valid).toBe(false);
+  }
+});
+
+test('combobox links only observed suggestions and active option to its field', () => {
+  const window = page();
+  window.document.body.innerHTML = '<input role="combobox" aria-label="Destination" aria-expanded="true" aria-controls="cities" aria-activedescendant="paris"><div id="cities" role="listbox"><div id="paris" role="option" aria-selected="true">Paris</div><div role="option" aria-disabled="true">Unavailable</div></div><div role="option">Unrelated</div>';
+  window.document.querySelector('input')!.focus();
+  const snapshot = window.eval(OBSERVER_EXPRESSION);
+  const field = snapshot.elements.find((e: any) => e.role === 'combobox');
+  const option = snapshot.elements.find((e: any) => e.label === 'Paris');
+  expect(field).toMatchObject({ focused: true, expanded: true, optionIds: [option.id], activeOptionId: option.id });
+  window.document.querySelector('#paris')!.setAttribute('aria-hidden', 'true');
+  const after = window.eval(OBSERVER_EXPRESSION);
+  expect(after.elements[0].optionIds).toEqual([]);
+  expect(after.elements[0].activeOptionId).toBeUndefined();
+});
+
+test('select-only combobox exposes Enter without pretending it is editable', () => {
+  const window = page();
+  window.document.body.innerHTML = '<button role="combobox" aria-label="Cabin" aria-expanded="true">Economy</button>';
+  const field = window.eval(OBSERVER_EXPRESSION).elements[0];
+  expect(field.operations).toContain('PRESS_ENTER');
+  expect(field.operations).not.toContain('TYPE_TEXT');
+});
+
+test('calendar date buttons expose pressed and current-date state', () => {
+  const window = page();
+  window.document.body.innerHTML = '<button aria-label="November 15, 2026" aria-pressed="false" aria-current="date">15</button>';
+  const before = window.eval(OBSERVER_EXPRESSION);
+  expect(before.elements[0]).toMatchObject({ pressed: false, current: 'date' });
+  window.document.querySelector('button')!.setAttribute('aria-pressed', 'true');
+  expect(window.eval(OBSERVER_EXPRESSION).elements[0].pressed).toBe(true);
+});
+
+test('calendar buttons retain parent-cell selection without inheriting unrelated container state', () => {
+  const window = page();
+  window.document.body.innerHTML = '<div role="grid" aria-label="October 2026"><div role="row"><div role="gridcell" aria-selected="true"><button aria-label="October 28, 2026">28</button></div><div role="gridcell" aria-selected="false"><button aria-label="October 29, 2026">29</button></div></div></div><button>Done</button>';
+  // Keep nested fixture controls within the synthetic viewport and reachable.
+  const before = window.eval(OBSERVER_EXPRESSION);
+  const selected = before.elements.find((e: any) => e.label === 'October 28, 2026');
+  expect(selected.container).toEqual({ role: 'gridcell', selected: true, groupRole: 'grid', groupLabel: 'October 2026' });
+  expect(before.elements.find((e: any) => e.label === 'October 29, 2026').container.selected).toBe(false);
+  expect(before.elements.find((e: any) => e.label === 'Done').container).toBeUndefined();
+  window.document.querySelector('[role="gridcell"]')!.setAttribute('aria-selected', 'false');
+  expect(window.eval(OBSERVER_EXPRESSION).elements.find((e: any) => e.label === 'October 28, 2026').container.selected).toBe(false);
+});
+
+test('modal combobox includes its visible portaled options but not unrelated page controls', () => {
+  const window = page();
+  window.document.body.innerHTML = '<button>Background</button><div role="dialog" aria-modal="true"><input role="combobox" aria-label="Destination" aria-expanded="true" aria-controls="cities"></div><div id="cities" role="listbox"><div role="option">Paris</div><div role="option" aria-hidden="true">Hidden</div></div><div role="listbox"><div role="option">Unrelated</div></div>';
+  const snapshot = window.eval(OBSERVER_EXPRESSION);
+  expect(snapshot.elements.map((e: any) => e.label)).toEqual(['Destination', 'Paris']);
+  expect(snapshot.elements[0].optionIds).toEqual([snapshot.elements[1].id]);
+  window.document.querySelector('input')!.setAttribute('aria-expanded', 'false');
+  expect(window.eval(OBSERVER_EXPRESSION).elements.map((e: any) => e.label)).toEqual(['Destination']);
+});
+
+test('observer preserves long drafts and explicitly marks oversized field values in DOM and AX modes', () => {
+  for (const accessibility of [false, true]) {
+    const window = page();
+    window.document.body.innerHTML = '<textarea aria-label="Write a message"></textarea>';
+    const field = window.document.querySelector('textarea')!;
+    const draft = 'Flight details '.repeat(65) + 'Final flight and signature';
+    field.value = draft;
+    const record = { backendNodeId: 42, role: 'textbox', axRole: 'textbox', label: 'Write a message', value: draft, properties: { multiline: true }, context: [] };
+    if (accessibility) (window as any).__ulkaAgent = { ids: new WeakMap(), nodes: new Map(), next: 1, axNodes: new Map([[42, field]]), axRecords: [record], axText: '' };
+    const expression = OBSERVER_EXPRESSION.replace('const useAccessibility = false;', `const useAccessibility = ${accessibility};`);
+    const observed = window.eval(expression).elements[0];
+    expect(observed.value).toBe(draft);
+    expect(observed.valueTruncated).toBeUndefined();
+    field.value = 'x'.repeat(4500);
+    record.value = field.value;
+    const oversized = window.eval(expression).elements[0];
+    expect(oversized.value).toHaveLength(4000);
+    expect(oversized.valueLength).toBe(4500);
+    expect(oversized.valueTruncated).toBe(true);
+  }
 });

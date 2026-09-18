@@ -1,3 +1,4 @@
+import { createChatScroll } from "./chat-scroll";
 import { chromeApi } from "./chrome";
 import { LOG_KEY, sanitize } from "./diagnostics";
 import type { ConversationMessage } from "./agent/conversation";
@@ -9,6 +10,7 @@ const apiKey = document.querySelector<HTMLInputElement>("#api-key")!;
 const keyStatus = document.querySelector<HTMLElement>("#key-status")!;
 const state = document.querySelector<HTMLElement>("#state")!;
 const chat = document.querySelector<HTMLElement>("#chat")!;
+const chatScroll = createChatScroll(chat);
 const trace = document.querySelector<HTMLElement>("#trace")!;
 const messages: ConversationMessage[] = [];
 type SavedChat = { id: string; title: string; messages: ConversationMessage[] };
@@ -19,6 +21,7 @@ let streamedText = '';
 let thinking: HTMLDetailsElement | undefined;
 let thinkingBody: HTMLElement | undefined;
 let thinkingText = '';
+let thinkingScroll: ReturnType<typeof createChatScroll> | undefined;
 let saveQueue = Promise.resolve();
 // Large searchable history dropdown, keeping the existing local chat storage.
 const header = document.querySelector('header')!;
@@ -64,7 +67,7 @@ historyPanel.addEventListener('keydown', event => {
     if (next < 0) historySearch.focus(); else items[Math.min(next, items.length - 1)]?.focus();
   }
 });
-newButton.addEventListener('click', () => { if (busy || !historyReady) return; currentId = crypto.randomUUID(); messages.length = 0; chat.replaceChildren(); prompt.value = ''; closeHistory(); appendMessage('assistant', 'What would you like to do?'); prompt.focus(); });
+newButton.addEventListener('click', () => { if (busy || !historyReady) return; currentId = crypto.randomUUID(); messages.length = 0; chat.replaceChildren(); chatScroll.bottom(); prompt.value = ''; closeHistory(); appendMessage('assistant', 'What would you like to do?'); prompt.focus(); });
 function renderHistory() {
   historyList.replaceChildren();
   historyCount.textContent = `${conversations.length} saved`;
@@ -81,7 +84,7 @@ function renderHistory() {
     const title = document.createElement('span'); title.className = 'history-entry-title'; title.textContent = entry.title;
     const preview = document.createElement('span'); preview.className = 'history-entry-preview'; preview.textContent = entry.messages.at(-1)?.content.replace(/\s+/g, ' ').slice(0, 160) ?? '';
     button.append(title, preview); button.title = entry.title;
-    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) appendMessage(message.role, message.content); closeHistory(); prompt.focus(); });
+    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) appendMessage(message.role, message.content); chatScroll.bottom(); closeHistory(); prompt.focus(); });
     historyList.append(button);
   }
 }
@@ -98,6 +101,9 @@ const approval = document.querySelector<HTMLDialogElement>("#approval")!;
 const approvalText = document.querySelector<HTMLElement>("#approval-text")!;
 let approvalId: string | undefined;
 const engine = document.querySelector<HTMLSelectElement>("#engine")!;
+const taskMode = document.querySelector<HTMLSelectElement>("#task-mode")!;
+void chromeApi.storage.local.get("ulkaBackground").then(stored => { taskMode.value = stored.ulkaBackground === true ? "background" : "foreground"; });
+taskMode.addEventListener("change", () => void chromeApi.storage.local.set({ ulkaBackground: taskMode.value === "background" }));
 void chromeApi.storage.local.get("ulkaEngine").then(stored => { engine.value = stored.ulkaEngine === "classic" ? "classic" : "fx"; });
 engine.addEventListener("change", () => void chromeApi.storage.local.set({ ulkaEngine: engine.value }));
 const progress = document.querySelector<HTMLElement>("#activity-detail")!;
@@ -147,13 +153,14 @@ document.querySelector("#send")!.addEventListener("click", async () => {
   const content = prompt.value.trim();
   if (!content || busy || !historyReady) return;
   document.querySelector("#welcome")?.remove();
-  busy = true; document.body.dataset.busy = "true"; send.disabled = true; engine.disabled = true; stop.hidden = false;
+  busy = true; document.body.dataset.busy = "true"; send.disabled = true; engine.disabled = true; taskMode.disabled = true; stop.hidden = false;
   const started = Date.now();
   const timer = setInterval(() => { document.querySelector("#elapsed")!.textContent = `${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
-  messages.push({ role: "user", content }); appendMessage("user", content); prompt.value = ""; state.textContent = "Thinking"; trace.textContent = ""; progress.textContent = "Understanding your request";
+  messages.push({ role: "user", content }); appendMessage("user", content); chatScroll.bottom(); prompt.value = ""; prompt.style.height = ""; state.textContent = "Thinking"; trace.textContent = ""; progress.textContent = "Understanding your request";
   thinking = document.createElement('details'); thinking.className = 'thinking-box'; thinking.open = true;
   const thinkingSummary = document.createElement('summary'); thinkingSummary.textContent = 'Thinking';
   thinkingBody = document.createElement('div'); thinkingBody.className = 'thinking-content'; thinkingBody.textContent = 'Working on your request. Reasoning appears here when provided by the model.';
+  thinkingScroll = createChatScroll(thinkingBody);
   thinking.append(thinkingSummary, thinkingBody); chat.append(thinking); thinkingText = '';
   streaming = appendMessage("assistant", ""); streaming.classList.add("streaming");
   streamedText = ''; saveConversation(); newButton.disabled = true; renderHistory();
@@ -165,14 +172,16 @@ document.querySelector("#send")!.addEventListener("click", async () => {
     logStatus.textContent = "Connection failed. Download logs and include this error.";
   }
   const reply = response.ok ? response.result?.reply ?? "Done." : response.error ?? "Request failed";
+  chatScroll.update(() => {
   if (thinking) { thinking.open = false; thinking.querySelector('summary')!.textContent = response.ok ? 'Thinking finished' : 'Thinking stopped'; }
-  thinking = undefined; thinkingBody = undefined;
-  messages.push({ role: "assistant", content: reply }); renderMarkdown(streaming, reply); streaming.classList.remove("streaming"); streaming.classList.toggle("error", !response.ok); streaming = undefined;
+  thinking = undefined; thinkingBody = undefined; thinkingScroll = undefined;
+  messages.push({ role: "assistant", content: reply }); renderMarkdown(streaming!, reply); streaming!.classList.remove("streaming"); streaming!.classList.toggle("error", !response.ok); streaming = undefined;
   saveConversation(); newButton.disabled = false;
-  clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; stop.hidden = true;
+  clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; taskMode.disabled = false; stop.hidden = true;
   if (approval.open) approval.close();
   state.textContent = response.ok ? "Ready" : "Needs attention";
   progress.textContent = response.ok ? "Run finished. Review the response above." : "Request failed. Diagnostics available in settings.";
+  });
 });
 prompt.addEventListener("keydown", (event) => {
   if (event.key === "Enter" && !event.shiftKey && !event.isComposing) { event.preventDefault(); (document.querySelector("#send") as HTMLButtonElement).click(); }
@@ -182,12 +191,12 @@ stop.addEventListener("click", () => { state.textContent = "Stopping…"; void c
 chromeApi.runtime.onMessage.addListener((raw) => {
   const message = raw as { type?: string; state?: string; event?: unknown; operation?: string; label?: string; id?: number; error?: string; text?: string; request?: ApprovalRequest; approvalId?: string };
   if (message.type === 'FX_REASONING' && message.text && busy && thinkingBody) {
-    thinkingText += message.text; renderMarkdown(thinkingBody, thinkingText);
+    thinkingText += message.text;
+    chatScroll.update(() => thinkingScroll?.update(() => renderMarkdown(thinkingBody!, thinkingText)));
   }
   if (message.type === "FX_PROGRESS" && message.text && streaming) {
-    const follow = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 90;
-    streamedText += message.text; renderMarkdown(streaming, streamedText);
-    if (follow) chat.scrollTop = chat.scrollHeight;
+    streamedText += message.text;
+    chatScroll.update(() => renderMarkdown(streaming!, streamedText));
   }
   if (message.type === "STATE" && message.state && busy) state.textContent = message.state.toLowerCase().replaceAll("_", " ");
   if (message.type === "TRACE" && message.event) {
@@ -221,6 +230,6 @@ function appendMessage(role: "user" | "assistant", content: string, error = fals
   const element = document.createElement("div");
   element.className = `message ${role}${error ? " error" : ""}`;
   if (role === 'assistant') renderMarkdown(element, content); else element.textContent = content;
-  chat.append(element); chat.scrollTop = chat.scrollHeight;
+  chatScroll.update(() => chat.append(element));
   return element;
 }

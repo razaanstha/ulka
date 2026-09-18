@@ -30,7 +30,7 @@ describe("Vercel Gateway Jev engine", () => {
       if (input.questions.target) { targetStarted(); return new Promise(() => {}); }
       return { answers: { operation: { type: 'choice', choice: 'CLICK', probabilities: Object.fromEntries(Object.keys(input.questions.operation.criteria).map(key => [key, key === 'CLICK' ? 1 : 0])) } } };
     };
-    const pending = new VercelJevDecisionEngine('test', evaluator, controller.signal, 1000).decide('Continue', snapshot, []);
+    const pending = new VercelJevDecisionEngine('test', evaluator, controller.signal, 1000).decide('Continue', { ...snapshot, elements: [...snapshot.elements, { ...snapshot.elements[0], id: 'e2' }] }, []);
     await started;
     controller.abort(new Error('Stopped by user'));
     await expect(pending).rejects.toThrow('Stopped by user');
@@ -99,6 +99,8 @@ describe("Vercel Gateway Jev engine", () => {
     expect(decision.operation).toBe("CLICK");
     expect(decision.target).toBe("e1");
     expect(decision.confidence).toBe(0.8);
+    expect(call).toBe(1);
+    expect(decision.targetProbabilities).toBeUndefined();
   });
 
   test("sends JSON-compatible state after an action with absent optional fields", async () => {
@@ -137,4 +139,78 @@ test('exhausted unlabeled toggle is removed before choosing another control', as
     return { answers: { operation: { type: 'choice', choice: 'CLICK', probabilities: Object.fromEntries(Object.keys(input.questions.operation.criteria).map(key => [key, key === 'CLICK' ? 1 : 0])) } } };
   };
   expect((await new VercelJevDecisionEngine('test', evaluator).decide('Search', page, [], { exhaustedActions: [key] })).target).toBe('e2');
+});
+
+
+test('multiple compatible targets still require model selection', async () => {
+  const page = { ...snapshot, elements: [...snapshot.elements, { ...snapshot.elements[0], id: 'e2', label: 'Help' }] };
+  let calls = 0;
+  const evaluator = async (input: any): Promise<any> => {
+    calls++;
+    if (input.questions.target) return { answers: { target: { type: 'choice', choice: 'e2', probabilities: { e1: 0.1, e2: 0.9 } } } };
+    return { answers: { operation: { type: 'choice', choice: 'CLICK', probabilities: Object.fromEntries(Object.keys(input.questions.operation.criteria).map(key => [key, key === 'CLICK' ? 1 : 0])) } } };
+  };
+  const result = await new VercelJevDecisionEngine('test', evaluator).decide('Open Help', page, []);
+  expect(calls).toBe(2);
+  expect(result.target).toBe('e2');
+  expect(result.targetProbabilities).toEqual({ e1: 0.1, e2: 0.9 });
+});
+
+test('model requests omit local metadata, retain compatibility, and report each evaluation', async () => {
+  const reports: any[] = [], requests: any[] = [];
+  const page = { ...snapshot, elements: [...snapshot.elements, { ...snapshot.elements[0], id: 'e2', label: 'Help', selected: true }] };
+  const evaluator = async (input: any): Promise<any> => {
+    requests.push(input);
+    const key = input.questions.target ? 'target' : 'operation';
+    const choice = key === 'target' ? 'e2' : 'CLICK';
+    return { usage: { inputTokens: 10, outputTokens: 1 }, answers: { [key]: { type: 'choice', choice, probabilities: Object.fromEntries(Object.keys(input.questions[key].criteria).map(id => [id, id === choice ? 1 : 0])) } } };
+  };
+  await new VercelJevDecisionEngine('test', evaluator, undefined, 30000, (stage, usage) => reports.push({ stage, usage })).decide('Help', page, []);
+  expect(requests[0].state.action_targets.CLICK).toEqual(['e1', 'e2']);
+  expect(requests[0].state.elements[1]).toMatchObject({ id: 'e2', label: 'Help', selected: true });
+  expect(JSON.stringify(requests.map(r => r.state))).not.toContain('nodeId');
+  expect(requests[1].state.elements).toHaveLength(0);
+  expect(requests[1].questions.target.criteria.e2).toMatchObject({ id: 'e2', label: 'Help', selected: true, role: 'button' });
+  expect(requests[1].questions.target.instructions.rules).toContain(requests[0].questions.operation.instructions.rules);
+  expect(requests[1].questions.target.criteria.e2.element).toContain('Help');
+  expect(reports.map(r => r.stage)).toEqual(['jev_operation', 'jev_target']);
+});
+
+
+test('both decision stages retain message editor structure and conversation relationships', async () => {
+  const context = [{ id: 'g1', role: 'dialog', label: 'Messaging', heading: 'New message' }];
+  const page: PageSnapshot = { ...snapshot, elements: [
+    { id: 'e1', nodeId: 1, role: 'combobox', label: 'Enter message recipients', context, operations: ['TYPE_TEXT'] },
+    { id: 'e2', nodeId: 2, role: 'textbox', label: 'Write a message…', context: [...context, { id: 'g2', role: 'form' }], multiline: true, operations: ['TYPE_TEXT'] },
+  ] };
+  const requests: any[] = [];
+  const evaluator = async (input: any): Promise<any> => {
+    requests.push(input);
+    const key = input.questions.target ? 'target' : 'operation';
+    const choice = key === 'target' ? 'e2' : 'TYPE_TEXT';
+    return { answers: { [key]: { type: 'choice', choice, probabilities: Object.fromEntries(Object.keys(input.questions[key].criteria).map(id => [id, id === choice ? 1 : 0])) } } };
+  };
+  const result = await new VercelJevDecisionEngine('test', evaluator).decide('Draft the message', page, []);
+  expect(result.target).toBe('e2');
+  for (const rows of [requests[0].state.elements, Object.values(requests[1].questions.target.criteria)]) {
+    expect(rows[0].context[0]).toEqual(context[0]);
+    expect(rows[1].context).toEqual(page.elements[1].context);
+    expect(rows[1].multiline).toBe(true);
+  }
+});
+
+test('large calendars omit offscreen rows from decisions without losing visible dates or blocked editors', async () => {
+  const page: PageSnapshot = { ...snapshot, elements: [
+    { ...snapshot.elements[0], label: 'October 5, 2026' },
+    { id: 'editor', nodeId: 2, role: 'textbox', label: 'Write a message', availability: 'occluded', operations: [] },
+    ...Array.from({ length: 248 }, (_, i) => ({ id: `date${i}`, nodeId: i + 3, role: 'button', label: `Offscreen date ${i}`, availability: 'offscreen' as const, operations: [] })),
+  ], scroll: { y: 0, height: 2000, viewportHeight: 800 } };
+  const evaluator = async (input: any) => {
+    expect(input.state.elements.map((e: any) => e.id)).toEqual(['e1', 'editor']);
+    expect(input.state.offscreen_controls).toEqual({ count: 248, by_role: { button: 248 } });
+    expect(input.questions.operation.criteria.SCROLL_DOWN).toBeDefined();
+    expect(input.state.action_targets.CLICK).toEqual(['e1']);
+    return { answers: { operation: { type: 'choice' as const, choice: 'CLICK', probabilities: Object.fromEntries(Object.keys(input.questions.operation.criteria).map(id => [id, id === 'CLICK' ? 1 : 0])) } } };
+  };
+  expect((await new VercelJevDecisionEngine('test', evaluator).decide('Select October 5', page, [])).target).toBe('e1');
 });

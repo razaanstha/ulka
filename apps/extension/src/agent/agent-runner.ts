@@ -1,3 +1,4 @@
+import { TextTargetMismatchError, textGenerationContext } from './text-generator';
 import type { ActionRecord, AgentDecision, PageSnapshot } from "../../../../packages/protocol/src/index";
 import { classifyAction } from "./approvals";
 import type { BrowserExecutor } from "./executor";
@@ -21,6 +22,7 @@ export interface RunnerOptions {
 export interface TaskMemory {
   history: ActionRecord[];
   attempts: Map<string, number>;
+  stateVisits?: Map<string, number>;
 }
 export interface AgentResult { status: "done" | "blocked" | "stopped"; reason?: string; history: ActionRecord[] }
 
@@ -42,6 +44,7 @@ export class AgentRunner {
   async run(goal: string): Promise<AgentResult> {
     const maxActions = this.options.maxActions ?? 30, maxModelCalls = this.options.maxModelCalls ?? 60;
     let calls = 0;
+    let nextSnapshot: PageSnapshot | undefined;
     let generatedTextCache: { key: string; text: string } | undefined;
     let staleAttempts = 0;
     let failedVerifications = 0;
@@ -49,11 +52,14 @@ export class AgentRunner {
     let scrollStreak = 0, emptyScrolls = 0;
     const seenContent = new Set<string>();
     const memory = this.options.taskMemory ?? { history: [], attempts: new Map<string, number>() };
+    const stateVisits = memory.stateVisits ??= new Map<string, number>();
     try {
       while (!this.stopped) {
         if (this.history.length >= maxActions || calls >= maxModelCalls) return this.blocked("Agent step limit reached.");
         this.states.transition("OBSERVING");
-        const snapshot = await this.observer.observe();
+        // Consume the settled observation once; stale retries and failed verification re-observe.
+        const snapshot = nextSnapshot ?? await this.observer.observe();
+        nextSnapshot = undefined;
         this.trace("observe", { url: snapshot.url, title: snapshot.title, elements: snapshot.elements.length, fingerprint: snapshot.fingerprint, snapshotId: snapshot.snapshotId, diagnostics: snapshot.diagnostics });
         this.states.transition("DECIDING");
         calls++;
@@ -105,7 +111,13 @@ export class AgentRunner {
           else {
             if (calls >= maxModelCalls) return this.blocked("Agent model-call limit reached.");
             calls++; this.states.transition("GENERATING_TEXT");
-            text = await this.textEngine.generate(goal, target, snapshot, this.history);
+            try {
+              text = await this.textEngine.generate(goal, target, snapshot, this.history);
+            } catch (error) {
+              if (!(error instanceof TextTargetMismatchError)) throw error;
+              this.trace('text', { target: target.id, label: target.label, rejected: true, evidence: error.message });
+              return this.blocked(`Text target rejected before typing: ${error.message}`);
+            }
             if (this.stopped) return this.stoppedResult();
             generatedTextCache = { key, text };
           }
@@ -142,6 +154,7 @@ export class AgentRunner {
           ? await this.observer.waitForChange(snapshot, () => this.stopped, decision.operation === "WAIT" ? 10000 : 3000)
           : await this.observer.observe();
         if (this.stopped) return this.stoppedResult();
+        nextSnapshot = after;
         record.pageChanged = progressState(after) !== progressState(snapshot);
         this.trace("action_progress", { operation: decision.operation, target: decision.target, pageChanged: record.pageChanged, rawPageChanged: after.fingerprint !== snapshot.fingerprint });
         if (decision.operation.startsWith('SCROLL_')) {
@@ -156,6 +169,14 @@ export class AgentRunner {
         } else if (decision.operation !== 'WAIT') { scrollStreak = 0; emptyScrolls = 0; seenContent.clear(); }
         if (decision.operation === 'WAIT' && exhaustedWait()) return this.blocked('Wait checkpoint: two waits produced no observed change. Read the current page and choose a non-WAIT action, or report a loading/access blocker. Do not repeat waiting or navigate merely to reset retries.');
         if (hasIneffectiveRepetition(this.history)) return this.blocked("Three actions produced no page change.");
+        // Count meaningful settled states across subgoals, not just changing DOM IDs.
+        // WAIT has its own checkpoint; do not spend the cycle allowance on loading.
+        if (decision.operation !== 'WAIT') {
+          const key = progressState(after);
+          const visits = (stateVisits.get(key) ?? 0) + 1;
+          stateVisits.set(key, visits);
+          if (visits >= 3) return this.blocked('Repeated page-state cycle across subgoals. The same observed state returned three times; inspect missing information or change strategy instead of repeating this interaction.');
+        }
       }
       return this.stoppedResult();
     } catch (error) {
@@ -181,10 +202,5 @@ export class AgentRunner {
 }
 
 export function textGenerationContextKey(goal: string, field: PageSnapshot["elements"][number], page: PageSnapshot, history: ActionRecord[]): string {
-  return JSON.stringify({
-    goal,
-    field: { label: field.label, role: field.role, inputType: field.inputType, currentValue: field.value },
-    page: { title: page.title, text: page.text },
-    recentActions: history.slice(-6),
-  });
+  return JSON.stringify(textGenerationContext(goal, field, page, history));
 }

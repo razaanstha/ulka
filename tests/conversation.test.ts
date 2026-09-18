@@ -6,6 +6,8 @@ describe("conversation planner", () => {
     const generator = async (input: any) => {
       expect(input.model.modelId).toBe("zai/glm-5.2-fast");
       expect(input.providerOptions).toBeUndefined();
+      expect(input.system).toContain("Current host time:");
+      expect(input.system).toContain("timeZone");
       expect(input.messages.at(-1)).toEqual({ role: "user", content: "Could you open About?" });
       return { output: { shouldAct: true, shouldReadPage: false, goal: "Open the About page.", reply: "I'll open About.", navigationUrl: null } };
     };

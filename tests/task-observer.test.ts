@@ -7,7 +7,7 @@ import { AgentRunner } from '../apps/extension/src/agent/agent-runner';
 function setup() {
   let pauses = 0, reads = 0;
   const raw = { pageIdentity: 'p', url: 'https://example.test', title: '', text: 'Same page', scroll: { y: 0, height: 100, viewportHeight: 100 }, elements: [], guards: {} };
-  const cdp = new CdpObserver({ attach: async () => {}, detach: async () => {}, sendCommand: async () => { reads++; return { result: { value: raw } }; } }, { tabId: 7 }, async () => { pauses++; });
+  const cdp = new CdpObserver({ attach: async () => {}, detach: async () => {}, sendCommand: async (_target: unknown, method: string) => { if (method !== 'Runtime.evaluate') throw new Error('unsupported'); reads++; return { result: { value: raw } }; } }, { tabId: 7 }, async () => { pauses++; });
   const observer = createTaskObserver(cdp, async () => [{ id: 7, url: raw.url, active: true }, { title: 'No id' }], async () => {});
   return { observer, pauses: () => pauses, reads: () => reads };
 }

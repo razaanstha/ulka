@@ -18,8 +18,10 @@ export function progressState(page: PageSnapshot): string {
     url: page.url, title: page.title, text: page.text,
     scroll: { y: page.scroll.y, targetY: page.scrollTarget?.y },
     elements: page.elements.map(element => ({
-      role: element.role, label: element.label, value: element.value,
-      checked: element.checked, selected: element.selected, expanded: element.expanded,
+      role: element.role, label: element.label, value: element.value, valueTruncated: element.valueTruncated, valueLength: element.valueLength,
+      pressed: element.pressed, current: element.current, checked: element.checked, selected: element.selected, expanded: element.expanded,
+      container: element.container, focused: element.focused, optionIds: element.optionIds, activeOptionId: element.activeOptionId,
+      multiline: element.multiline, availability: element.availability, context: element.context?.map(({ id: _id, ...meaning }) => meaning),
       operations: element.operations, options: element.options,
       enabled: page.guards[element.id]?.enabled,
     })),
@@ -34,6 +36,6 @@ export function progressActionKey(page: PageSnapshot, decision: Pick<AgentDecisi
   // Match the control, not its page-wide position or unrelated live content.
   // Duplicate accessible names retain a local ordinal; unique names survive rerenders/reloads.
   const ordinal = page.elements.slice(0, index).filter(element => element.role === target.role && element.label === target.label).length;
-  const state = { value: target.value, checked: target.checked, selected: target.selected, expanded: target.expanded };
+  const state = { value: target.value, container: target.container, context: target.context?.map(({ id: _id, ...meaning }) => meaning), pressed: target.pressed, checked: target.checked, selected: target.selected, expanded: target.expanded, ...(target.activeOptionId ? { activeOption: page.elements.find(element => element.id === target.activeOptionId)?.label } : {}) };
   return 'progress:' + JSON.stringify([page.url, target.role, target.label, ordinal, state, decision.operation, decision.option]);
 }
