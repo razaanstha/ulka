@@ -38,9 +38,9 @@ test('missing pricing and usage remain partial; previous snapshots stay immutabl
   expect(element.textContent).toContain('12 tokens');
   expect(element.textContent).toContain('Partial');
   expect(element.textContent).toContain('Updating');
-  renderUsage(element, JSON.parse(JSON.stringify(summary)));
+  renderUsage(element, JSON.parse(JSON.stringify(summary)), false, false, 62000);
   expect(element.textContent).not.toContain('Updating');
-  expect(element.textContent).toContain('Est. $0.0140');
+  expect(element.textContent).toContain('Est. $0.0140 · 1m 02s');
 });
 
 test('pending usage stays hidden until reported data exists', () => {

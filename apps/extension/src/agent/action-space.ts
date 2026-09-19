@@ -57,7 +57,7 @@ export function buildActionSpace(snapshot: PageSnapshot): ActionSpace {
     targets[operation] = Object.fromEntries(compatible.map(element => [element.id, { element: `[${element.id}] ${element.label}`, role: element.role }]));
   }
   if (targets.CLICK) operations.CLICK = "Click an available observed interactive element.";
-  if (targets.TYPE_TEXT) operations.TYPE_TEXT = "Enter or replace text in an observed editable field.";
+  if (targets.TYPE_TEXT) operations.TYPE_TEXT = "Enter or replace text in an observed editable field. Prefer this for editable dates instead of clicking calendar day cells; preserve other fields.";
   if (targets.SELECT) operations.SELECT = "Choose an observed native select option.";
   if (targets.PRESS_ENTER) operations.PRESS_ENTER = "Press Enter on an observed editable field to submit or accept a suggestion.";
   if (targets.PRESS_ESCAPE) operations.PRESS_ESCAPE = "Press Escape on an observed editable field to dismiss a popup.";

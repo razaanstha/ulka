@@ -21,3 +21,11 @@ test('usage ledger aggregates stages and flags missing usage without inventing t
   expect(ledger.summary()).toMatchObject({ inputTokens: 345, outputTokens: 34, missingUsageReports: 2,
     stages: { fx_turn: { reports: 2, inputTokens: 300, outputTokens: 30, missingUsageReports: 0 } } });
 });
+
+test('field generation and review use the configured model prices', () => {
+  const ledger = new ModelUsageLedger();
+  ledger.setPrices({ 'inception/mercury-2.5': { input: 0.001, output: 0.002 }, 'deepseek/deepseek-v4.1-flash': { input: 1, output: 2 } });
+  ledger.record('text_generation', { inputTokens: 10, outputTokens: 5 });
+  ledger.record('text_content_review', { inputTokens: 10, outputTokens: 5 });
+  expect(ledger.summary().estimatedCostUsd).toBeCloseTo(40);
+});

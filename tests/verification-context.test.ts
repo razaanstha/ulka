@@ -15,7 +15,9 @@ const page: PageSnapshot = {
 
 function decodeControls(payload: ReturnType<typeof verificationContext>, reference: any) {
   const table = payload.controlSets[reference.controlSetRef];
+  const base = (table as any).baseControlSetRef === undefined ? undefined : payload.controlSets[(table as any).baseControlSetRef];
   return table.rows.map(row => {
+    if (typeof row === 'number') row = base!.rows[row] as unknown[];
     const record: Record<string, unknown> = {};
     table.columns.forEach((key, i) => {
       if (row[i] != null) record[key === 'contextRef' ? 'context' : key] = key === 'contextRef' ? payload.contexts[row[i] as number] : row[i];
@@ -34,6 +36,21 @@ test('verification compaction retains all controls, late field values and shared
   expect(controls).toEqual(snapshot.elements.map(({ nodeId, operations, ...meaning }) => meaning));
   expect(controls.at(-1)).toMatchObject({ value: '', valueLength: 0, expanded: true, activeOptionId: 'e249' });
   expect(packed.contexts).toHaveLength(1);
+});
+
+test('small changes reuse exact control rows without dropping reordered or changed evidence', () => {
+  const snapshots = Array.from({ length: 8 }, (_, index) => ({ ...page,
+    elements: page.elements.map((e, i) => ({ ...e, label: `Result ${i}: ${'Observed flight information '.repeat(5)}`, selected: i === index })),
+  }));
+  snapshots[3].elements.reverse();
+  snapshots[4].elements.splice(80, 1);
+  const evidence = snapshots.map((s, i) => ({ tool: 'observe_browser', observedAt: String(i), result: JSON.stringify({ page: modelPage(s) }) }));
+  const packed = verificationContext('Compare results', snapshots[7], [], evidence);
+  for (const [i, item] of (packed.taskEvidence as any[]).entries()) {
+    expect(decodeControls(packed, item.result.page.elements)).toEqual(snapshots[i].elements.map(({ nodeId, operations, ...e }) => e));
+  }
+  const formerTableCharacters = snapshots.reduce((n, s) => n + JSON.stringify(verificationContext('', s, [], []).controlSets).length, 0);
+  expect(JSON.stringify(packed.controlSets).length).toBeLessThan(formerTableCharacters * 0.35);
 });
 
 test('repeated observations share tables without losing chronology or changed states', () => {

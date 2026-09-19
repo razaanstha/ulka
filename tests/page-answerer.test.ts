@@ -14,3 +14,13 @@ test("page answerer receives only structured visible observation", async () => {
   expect(await new PageAnswerer("test-key", generator).answer([{ role: "user", content: "What is the fare?" }], page))
     .toEqual({ answer: "Fare is SEK 1200.", evidence: ["Visible fare SEK 1200"] });
 });
+
+test("already stopped page read never starts a model request", async () => {
+  let calls = 0;
+  const reader = new PageAnswerer("test-key", async () => {
+    calls++;
+    return { output: { answer: "Late answer", evidence: [] } };
+  });
+  await expect(reader.answer([{ role: "user", content: "Read" }], { snapshotId: "s", fingerprint: "f", pageIdentity: "p", url: "https://example.test", title: "Example", text: "Visible", scroll: { y: 0, height: 100, viewportHeight: 100 }, elements: [], guards: {}, createdAt: 1 }, AbortSignal.abort(new Error("Stopped")))).rejects.toThrow("Stopped");
+  expect(calls).toBe(0);
+});

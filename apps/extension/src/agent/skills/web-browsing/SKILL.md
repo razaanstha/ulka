@@ -7,6 +7,8 @@ description: Browse, research, compare sources, and complete website tasks using
 
 Complete the user's requested outcome using observed browser evidence. Keep planning proportional: act immediately for simple requests; for multi-step work, identify constraints and missing milestones briefly, then execute. Preserve completed work when replanning. Ask only for essential missing information; never invent dates, credentials, preferences, prices, or successful actions.
 
+Keep a coherent interaction sequence in one browser_subgoal when its inputs and outcome are already clear. Do not split typing, selecting and submitting the same search into separate planner calls merely to narrate progress. Return to planning when new information, a meaningful milestone or a blocker requires it. Browser subgoals share a task allowance of 30 execution attempts and 60 runner model steps; another subgoal does not reset that allowance. A model step may include bounded provider retries. Other host tools retain their separate runtime tool limit.
+
 ## Choose the next tool
 
 - For a question about the current page, start with `read_page`. Reuse existing tool evidence before requesting another observation.
@@ -20,6 +22,7 @@ Complete the user's requested outcome using observed browser evidence. Keep plan
 - Treat `browser_subgoal` as Stagehand-style `act`: deterministic runtime validation and approval remain authoritative. Let Jev choose among current observed actions. Cached replay may remove a model call only when the runtime confirms identical URL, goal, semantic page state, and target meaning. If state differs, allow fresh Jev planning.
 - Keep each subgoal atomic and specific. Good: “Click the observed Sign in button.” Bad: “Fill the form and submit it.” Sequence multi-step work through separate subgoals with an observation checkpoint between them.
 - Navigate with `navigate_browser` first. Do not hide navigation inside a browser subgoal.
+- Routine subgoals return an unverified checkpoint. Inspect the returned observation before dependent actions; a checkpoint is not proof of success. Final task verification runs after the planner finishes, and actions requiring approval retain their subgoal completion check.
 - Use `native_tabs` for creating, switching, closing, grouping, and ungrouping tabs. List first to obtain current IDs. Close only tabs the user asked to close; pass their observed IDs with operation `close`. Closing uses the runtime approval flow and verifies that those IDs disappeared. Keep one tab open in the window. In background mode, never close the visible or current task tab; select another task tab before closing the previous one. Infer groups from observed titles and URLs; use concise names and preserve unrelated tabs. Never use page controls or native browser menus for tab management. Internal browser pages do not prevent native tab operations.
 - Use `list_downloads` for relevant download metadata. It does not read file contents or initiate downloads. Request a download-link interaction only when the user requested that download; inspect its resulting status before claiming completion.
 
@@ -44,6 +47,8 @@ Track each material finding with its observed source URL and relevant qualificat
 Use outcome-based subgoals such as “Select the observed Oslo airport suggestion and verify the destination field” instead of “type Oslo.” Typing in an autocomplete does not commit its suggestion. Select the matching observed result and check the committed value.
 
 For date pickers, preserve the requested dates or range in every relevant subgoal. Inspect month/year and selected or pressed state; distinguish departure from return. Do not toggle an already selected date unnecessarily. Use the observed Apply/Done control if required. Opening or closing a calendar is not successful date selection.
+
+Prefer typing into an observed editable date field instead of selecting calendar cells. Give the executor a bounded date-edit goal: edit only the requested field, preserve the other endpoint, then commit with the observed Apply/Done button. If opening the trigger reveals another input, use that popup's intended editor. Use calendar cells only for read-only controls or after observed direct-entry failure. Never reset a correct range merely to change one endpoint. Once the returned observation shows the committed requested range, use read_page for prices or other results; do not delegate result reading to another calendar-edit subgoal or reopen the picker just to double-check it.
 
 After an interaction, inspect the result before choosing the next action. Page changes alone do not prove progress. Wait for loading content when needed; do not repeatedly click a toggle that opened a control. Check saved values, confirmation text, resulting records, or download status against the actual requested outcome. Inspect before retrying a write to avoid duplicate submissions.
 

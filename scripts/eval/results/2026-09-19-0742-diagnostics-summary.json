@@ -1,0 +1,315 @@
+{
+  "scope": "Exported diagnostics only. Event buffers may omit starts or terminal outcomes. Timings overlap: tool, text, decision and verification durations must not be summed together. Verification durations are cumulative from check start, including retries. Outside-tool time includes model work and is not isolated FX runtime overhead.",
+  "runs": [
+    {
+      "runId": "b54e2627-21fb-4eaa-822a-cbbeac5f94f2",
+      "first": "2026-09-19T07:13:24.339Z",
+      "last": "2026-09-19T07:18:43.896Z",
+      "requestSeen": false,
+      "metrics": {
+        "jev_decision": {
+          "count": 2,
+          "totalMs": 1077.5000002384186,
+          "minMs": 383.80000019073486,
+          "maxMs": 693.7000000476837
+        },
+        "verification_error_elapsed": {
+          "count": 1,
+          "totalMs": 299263,
+          "minMs": 299263,
+          "maxMs": 299263
+        },
+        "verification_completed_elapsed": {
+          "count": 1,
+          "totalMs": 307002.69999980927,
+          "minMs": 307002.69999980927,
+          "maxMs": 307002.69999980927
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 371204.2000000477,
+          "minMs": 371204.2000000477,
+          "maxMs": 371204.2000000477
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 331211.7000002861,
+          "minMs": 331211.7000002861,
+          "maxMs": 331211.7000002861
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 39992.49999976158,
+          "minMs": 39992.49999976158,
+          "maxMs": 39992.49999976158
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 0,
+      "textModels": [],
+      "stopReasons": [
+        "end_turn"
+      ],
+      "httpFailures": [],
+      "completeEnvelope": false,
+      "predatesExportBuild": true,
+      "statusConflict": false
+    },
+    {
+      "runId": "d3e688ea-d0f7-4b69-b452-19cde86fb512",
+      "first": "2026-09-19T07:21:10.563Z",
+      "last": "2026-09-19T07:21:30.108Z",
+      "requestSeen": true,
+      "metrics": {
+        "jev_decision": {
+          "count": 2,
+          "totalMs": 2154.5999999046326,
+          "minMs": 793,
+          "maxMs": 1361.5999999046326
+        },
+        "text_model_error": {
+          "count": 4,
+          "totalMs": 2830.600000143051,
+          "minMs": 490.5,
+          "maxMs": 1019.9000000953674
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 19485.10000014305,
+          "minMs": 19485.10000014305,
+          "maxMs": 19485.10000014305
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 6871.200000047684,
+          "minMs": 6871.200000047684,
+          "maxMs": 6871.200000047684
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 12613.900000095367,
+          "minMs": 12613.900000095367,
+          "maxMs": 12613.900000095367
+        }
+      },
+      "textFailures": 4,
+      "textSuccesses": 0,
+      "textModels": [
+        "inception/mercury-2.5"
+      ],
+      "stopReasons": [
+        "cancelled"
+      ],
+      "httpFailures": [],
+      "requestAt": "2026-09-19T07:21:10.563Z",
+      "terminalStatus": "blocked",
+      "terminalAt": "2026-09-19T07:21:30.079Z",
+      "completeEnvelope": true,
+      "requestToTerminalMs": 19516,
+      "predatesExportBuild": true,
+      "statusConflict": false
+    },
+    {
+      "runId": "8832ef7e-9c4f-4f7d-8f1b-c375c1df3b71",
+      "first": "2026-09-19T07:25:20.198Z",
+      "last": "2026-09-19T07:26:59.863Z",
+      "requestSeen": true,
+      "metrics": {
+        "jev_decision": {
+          "count": 12,
+          "totalMs": 10327.799999713898,
+          "minMs": 568.5,
+          "maxMs": 1182.9000000953674
+        },
+        "text_model_end": {
+          "count": 2,
+          "totalMs": 1891.5,
+          "minMs": 732.2000000476837,
+          "maxMs": 1159.2999999523163
+        },
+        "verification_completed_elapsed": {
+          "count": 3,
+          "totalMs": 38878.300000190735,
+          "minMs": 2280.800000190735,
+          "maxMs": 18377.799999952316
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 80919.5,
+          "minMs": 80919.5,
+          "maxMs": 80919.5
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 40833.200000047684,
+          "minMs": 40833.200000047684,
+          "maxMs": 40833.200000047684
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 40086.299999952316,
+          "minMs": 40086.299999952316,
+          "maxMs": 40086.299999952316
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 2,
+      "textModels": [
+        "inception/mercury-2.5"
+      ],
+      "stopReasons": [
+        "end_turn"
+      ],
+      "httpFailures": [],
+      "requestAt": "2026-09-19T07:25:20.198Z",
+      "terminalStatus": "done",
+      "terminalAt": "2026-09-19T07:26:59.816Z",
+      "completeEnvelope": true,
+      "requestToTerminalMs": 99618,
+      "predatesExportBuild": true,
+      "statusConflict": false
+    },
+    {
+      "runId": "4ababe39-775d-42dc-b10f-5b78485d4abd",
+      "first": "2026-09-19T07:27:36.652Z",
+      "last": "2026-09-19T07:29:27.702Z",
+      "requestSeen": true,
+      "metrics": {
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 110981.09999990463,
+          "minMs": 110981.09999990463,
+          "maxMs": 110981.09999990463
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 2647,
+          "minMs": 2647,
+          "maxMs": 2647
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 108334.09999990463,
+          "minMs": 108334.09999990463,
+          "maxMs": 108334.09999990463
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 0,
+      "textModels": [],
+      "stopReasons": [
+        "cancelled"
+      ],
+      "httpFailures": [],
+      "requestAt": "2026-09-19T07:27:36.652Z",
+      "terminalStatus": "blocked",
+      "terminalAt": "2026-09-19T07:29:27.651Z",
+      "completeEnvelope": true,
+      "requestToTerminalMs": 110999,
+      "predatesExportBuild": true,
+      "statusConflict": false
+    },
+    {
+      "runId": "61be33b9-c7c2-4cf5-b910-7a9ddd5fad4d",
+      "first": "2026-09-19T07:31:13.648Z",
+      "last": "2026-09-19T07:33:52.464Z",
+      "requestSeen": true,
+      "metrics": {
+        "jev_decision": {
+          "count": 10,
+          "totalMs": 12519.599999904633,
+          "minMs": 327.2999999523163,
+          "maxMs": 7388.700000047684
+        },
+        "text_model_end": {
+          "count": 2,
+          "totalMs": 1873.6000001430511,
+          "minMs": 905.7000000476837,
+          "maxMs": 967.9000000953674
+        },
+        "verification_completed_elapsed": {
+          "count": 2,
+          "totalMs": 33227.89999985695,
+          "minMs": 15019,
+          "maxMs": 18208.89999985695
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 158740.29999995232,
+          "minMs": 158740.29999995232,
+          "maxMs": 158740.29999995232
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 99357,
+          "minMs": 99357,
+          "maxMs": 99357
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 59383.299999952316,
+          "minMs": 59383.299999952316,
+          "maxMs": 59383.299999952316
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 2,
+      "textModels": [
+        "inception/mercury-2.5"
+      ],
+      "stopReasons": [
+        "cancelled"
+      ],
+      "httpFailures": [],
+      "requestAt": "2026-09-19T07:31:13.648Z",
+      "terminalStatus": "blocked",
+      "terminalAt": "2026-09-19T07:33:52.412Z",
+      "completeEnvelope": true,
+      "requestToTerminalMs": 158764,
+      "predatesExportBuild": true,
+      "statusConflict": false
+    },
+    {
+      "runId": "68275be2-296e-4fbb-b682-826239e4458b",
+      "first": "2026-09-19T07:42:20.020Z",
+      "last": "2026-09-19T07:42:21.699Z",
+      "requestSeen": true,
+      "metrics": {
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 1607.7000000476837,
+          "minMs": 1607.7000000476837,
+          "maxMs": 1607.7000000476837
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 0,
+          "minMs": 0,
+          "maxMs": 0
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 1607.7000000476837,
+          "minMs": 1607.7000000476837,
+          "maxMs": 1607.7000000476837
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 0,
+      "textModels": [],
+      "stopReasons": [
+        "refused"
+      ],
+      "httpFailures": [
+        403
+      ],
+      "requestAt": "2026-09-19T07:42:20.020Z",
+      "terminalStatus": "idle",
+      "terminalAt": "2026-09-19T07:42:21.657Z",
+      "completeEnvelope": true,
+      "requestToTerminalMs": 1637,
+      "predatesExportBuild": false,
+      "statusConflict": true
+    }
+  ]
+}

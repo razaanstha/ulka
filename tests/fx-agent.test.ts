@@ -112,6 +112,7 @@ test("FX receives the bundled browsing skill without discovery metadata", async 
   const base = fakeRuntime(async () => {});
   const runtime = { ...base, createFxAgent: async (options: Parameters<typeof import("libfx/browser").createFxAgent>[0]) => {
     instructions = options.instructions;
+    expect(typeof options.fetch).toBe('function');
     return base.createFxAgent(options);
   } };
   await runFxBrowser("test", [{ role: "user", content: "Read this page" }], host, new AbortController().signal, runtime);
@@ -191,6 +192,46 @@ function fakeRuntime(action: (tools: FxTool[]) => Promise<void>) {
     }), close: async () => {},
   }) };
 }
+
+test('Gateway 403 and refused turn are blocked, never idle or verified success', async () => {
+  for (const actFirst of [false, true]) {
+    const { host, calls } = fixture();
+    const signal = new AbortController().signal;
+    const runtime = { supportsJspi: () => true, createFxAgent: async (options: Parameters<typeof import('libfx/browser').createFxAgent>[0]) => ({
+      prompt: () => ({
+        async *[Symbol.asyncIterator]() {
+          if (actFirst) await options.tools.find(tool => tool.name === 'browser_subgoal')!.execute({ goal: 'Open page' }, { signal });
+          options.onEvent?.({ type: 'transport.response', status: 403, requestId: 'synthetic-request' });
+          yield { type: 'text_delta', delta: 'Forbidden' };
+        }, result: Promise.resolve({ stopReason: 'refused', usage: {} }), cancel() {},
+      }), close: async () => {},
+    }) };
+    const result = await runFxBrowser('test', [], host, signal, runtime);
+    expect(result.status).toBe('blocked');
+    expect(result.reply).toContain('HTTP 403');
+    expect(calls).not.toContain('verify');
+  }
+});
+
+test('refusal without HTTP error cannot masquerade as a completed conversation', async () => {
+  const { host } = fixture();
+  const runtime = { supportsJspi: () => true, createFxAgent: async () => ({
+    prompt: () => ({ async *[Symbol.asyncIterator]() { yield { type: 'text_delta', delta: 'Refused' }; },
+      result: Promise.resolve({ stopReason: 'refused', usage: {} }), cancel() {} }), close: async () => {},
+  }) };
+  expect((await runFxBrowser('test', [], host, new AbortController().signal, runtime)).status).toBe('blocked');
+});
+
+test('successful transport recovery clears an earlier HTTP error', async () => {
+  const { host } = fixture();
+  const base = fakeRuntime(async () => {});
+  const runtime = { ...base, createFxAgent: async (options: Parameters<typeof import('libfx/browser').createFxAgent>[0]) => {
+    options.onEvent?.({ type: 'transport.response', status: 503 });
+    options.onEvent?.({ type: 'transport.response', status: 200 });
+    return base.createFxAgent(options);
+  } };
+  expect((await runFxBrowser('test', [], host, new AbortController().signal, runtime)).status).toBe('idle');
+});
 
 test("closed task tab stops recovery and prevents reopening", async () => {
   const { host, calls } = fixture(); const signal = new AbortController().signal;
@@ -420,6 +461,7 @@ test('FX receives host time and preserves task time during recovery', async () =
   let checks = 0; const prompts: any[] = [];
   host.verify = async goal => {
     expect(JSON.parse(goal).taskTime).toEqual(prompts[0].taskTime);
+    expect(JSON.parse(goal).proposedAnswer).toBe('Completed');
     return { satisfied: ++checks === 2, evidence: 'Missing date selection' };
   };
   const base = fakeRuntime(async tools => {
@@ -471,4 +513,87 @@ test('stopped FX result preserves partial answer for callers', async () => {
     }), close: async () => {},
   }) };
   expect(await runFxBrowser('test', [], host, controller.signal, runtime)).toMatchObject({ status: 'stopped', partialReply: 'A useful finding' });
+});
+
+
+test('compact observations report omitted offscreen context instead of claiming completeness', () => {
+  const compact = compactToolResult({ page: { elements: [], diagnostics: { omittedOffscreenControls: 37 } } }) as any;
+  expect(compact.page.omittedControls).toBe(37);
+  expect(compact.page.omittedControlReason).toContain('Offscreen');
+});
+
+test('FX never repeats browser subgoal after text service failure', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let calls = 0;
+  host.act = async () => { calls++; return { status: 'blocked', failure: 'text_generation_unavailable', reason: 'Text generation unavailable. No text entered.' }; };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const action = tools.find(tool => tool.name === 'browser_subgoal')!;
+    await action.execute({ goal: 'Fill query' }, { signal });
+    await action.execute({ goal: 'Try another field' }, { signal });
+  }));
+  expect(calls).toBe(1);
+  expect(result.status).toBe('blocked');
+});
+
+test('FX stops immediately when the shared browser task budget is exhausted', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let calls = 0;
+  host.act = async () => { calls++; return { status: 'blocked', failure: 'task_budget_exhausted', reason: 'Task action budget exhausted.' }; };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const action = tools.find(tool => tool.name === 'browser_subgoal')!;
+    await action.execute({ goal: 'Continue' }, { signal });
+    await action.execute({ goal: 'Try again' }, { signal });
+  }));
+  expect(calls).toBe(1);
+  expect(result.status).toBe('blocked');
+});
+
+test('routine subgoal checkpoints still require final task verification', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let checks = 0;
+  host.act = async () => ({ status: 'checkpoint', reason: 'Subgoal remains unverified', observation: { page: { text: 'Observed result', elements: [] } } });
+  host.verify = async (_goal, evidence) => {
+    checks++;
+    expect(evidence).toHaveLength(2);
+    expect(evidence!.every(item => JSON.parse(item.result).status === 'checkpoint')).toBe(true);
+    return { satisfied: true, evidence: 'All outcomes visible' };
+  };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const action = tools.find(tool => tool.name === 'browser_subgoal')!;
+    await action.execute({ goal: 'Search' }, { signal });
+    await action.execute({ goal: 'Read results' }, { signal });
+  }));
+  expect(result.status).toBe('done');
+  expect(checks).toBe(1);
+});
+
+test('unverified checkpoints cannot turn failed final verification into success', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  host.act = async () => ({ status: 'checkpoint', reason: 'Subgoal remains unverified' });
+  host.verify = async () => ({ satisfied: false, evidence: 'Requested result absent' });
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'browser_subgoal')!.execute({ goal: 'Search' }, { signal });
+  }));
+  expect(result.status).toBe('blocked');
+});
+
+test('large page previews stay small while final verification retains late controls', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const elements = Array.from({ length: 2000 }, (_, i) => ({ id: `e${i}`, nodeId: i, role: 'link', label: '長い記事のリンク'.repeat(100), operations: ['CLICK'] }));
+  elements.push({ id: 'destination', nodeId: 2001, role: 'textbox', label: 'Destination', operations: ['TYPE_TEXT'], value: 'Oslo', selected: true } as any);
+  host.act = async () => ({ status: 'checkpoint', observation: { tabId: 7, page: { url: 'https://example.test/article', text: 'Article', elements } } });
+  host.verify = async (_goal, evidence) => {
+    const full = JSON.parse(evidence![0].result);
+    expect(full.observation.page.controls).toHaveLength(2001);
+    expect(full.observation.page.controls.at(-1)).toMatchObject({ id: 'destination', value: 'Oslo', selected: true });
+    return { satisfied: true, evidence: 'Destination observed' };
+  };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const returned = await tools.find(t => t.name === 'browser_subgoal')!.execute({ goal: 'Read destination' }, { signal }) as any;
+    expect(new TextEncoder().encode(JSON.stringify(returned)).length).toBeLessThan(16_000);
+    expect(returned.observation.page.plannerOmittedControls).toBeGreaterThan(0);
+    expect(returned.observation.page.controls).toContainEqual(expect.objectContaining({ id: 'destination', value: 'Oslo' }));
+    expect(elements.at(-1)).toHaveProperty('nodeId');
+  }));
+  expect(result.status).toBe('done');
 });

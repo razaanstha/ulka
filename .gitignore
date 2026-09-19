@@ -6,7 +6,8 @@
 ._*
 
 # Custom folder icons
-Icon
+Icon
+
 
 # Volume root files
 .DocumentRevisions-V100
@@ -69,3 +70,7 @@ test-results/
 .yarn/unplugged
 .yarn/install-state.gz
 .pnp.*
+
+# Local Python evaluation artifacts
+__pycache__/
+*.pyc

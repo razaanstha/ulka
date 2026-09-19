@@ -20,3 +20,13 @@ describe("conversation planner", () => {
     await expect(new ConversationPlanner("test-key", generator).interpret([{ role: "user", content: "hello" }])).rejects.toThrow();
   });
 });
+
+test("cancelled planning cannot return a late navigation intent", async () => {
+  const controller = new AbortController();
+  const planner = new ConversationPlanner("test-key", async (input) => {
+    expect(input.abortSignal).toBe(controller.signal);
+    controller.abort(new Error("Stopped"));
+    return { output: { shouldAct: true, shouldReadPage: false, goal: "Navigate", reply: "Opening", navigationUrl: "https://example.test" } };
+  });
+  await expect(planner.interpret([{ role: "user", content: "Navigate" }], controller.signal)).rejects.toThrow("Stopped");
+});

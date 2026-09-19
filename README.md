@@ -63,7 +63,7 @@ Background mode uses the original task tab, not a duplicate. Some sites may paus
 
 ## Models and capabilities
 
-- Language model: `deepseek/deepseek-v4.1-flash`, configured in `apps/extension/src/agent/models.ts`.
+- Planning and verification: `deepseek/deepseek-v4.1-flash`. Field writing and content review also use `deepseek/deepseek-v4.1-flash`, with reasoning disabled. Mercury was removed from the active path after intermittent unrelated refusals in live field checks. Both configured in `apps/extension/src/agent/models.ts`.
 - Action selection: `typesafe-ai/jev`, configured in `apps/extension/src/agent/vercel-jev.ts`.
 - FX browsing skill: [`web-browsing/SKILL.md`](apps/extension/src/agent/skills/web-browsing/SKILL.md), bundled into the runtime prompt. Edit this file to maintain research, interaction, recovery, and evidence guidance; rebuild and reload the extension afterward. Classic retains its existing planner and Jev rules.
 - Model availability and usage costs depend on Gateway and its providers. No subscriptions or credits are included.
@@ -77,6 +77,8 @@ Accessibility semantics drive observation; DOM nodes provide execution targets a
 Page text, element labels, relevant field values, task history, and your messages may be sent to Gateway and its selected model providers. This is **not an offline assistant**.
 
 The Gateway key, chats, and diagnostic events live in `chrome.storage.local`. The key is not an encrypted secret vault. Use a personal, limited-budget key. Never share it or put it in source files.
+
+All inference paths explicitly send `providerOptions.gateway.zeroDataRetention: false`: FX planning, Jev evaluation, structured generation/review/verification, model diagnostics, and the synthetic text benchmark. ZDR was disabled at the user's request after Gateway confirmed that the current Hobby plan cannot use it. Existing provider options remain intact. No zero-retention guarantee is requested; this does not change local chat or diagnostic storage. See [Vercel's ZDR documentation](https://vercel.com/blog/zdr-on-ai-gateway).
 
 Permissions: `debugger` executes and observes page actions; `tabs` and `tabGroups` manage tabs; `downloads` reads download status; `storage` saves local settings/history; `sidePanel` provides the UI; `activeTab` supports current-tab access. HTTP(S) content scripts display progress controls. Gateway host access permits model requests.
 
@@ -128,3 +130,35 @@ The 17:10 run still returned HTTP 405 after switching to streaming, so streaming
 The 17:35 connection checks passed for DeepSeek V4.1 Flash, including structured output with low reasoning. Its real final verification instead failed JSON parsing after 24 seconds. Verification now allows one fresh attempt on invalid structured output using identical evidence and strict validation. A provider-confirmed `length` finish raises the retry output budget from 1,200 to 8,192 tokens; other malformed output keeps the original budget. Logs record finish reason, generated character count, and failed-generation usage without recording generated text. Browser actions are never replayed by this recovery. Earlier StepFun errors explicitly rejected `json_schema`; those are separate from the DeepSeek parsing failure.
 
 FX exposes `ask_user` for essential missing preferences, dates, or ambiguous targets. Questions support two to six choices plus custom text, or free text alone. The running task pauses without an answer deadline and resumes with its tool history and user clarification intact. Stop/Cancel task cancels the pending question; stale and empty replies are rejected. Reopening the panel restores the question while the same background worker remains alive. Browser/extension restarts do not persist running task execution. Clarifications do not replace action approvals or turn user answers into observed evidence.
+
+
+Observation settling uses an elapsed-time budget that includes page scans. A scan already in flight can overrun that budget; hard transport deadlines remain separate work. Visible ARIA busy regions, indeterminate progress indicators, and standalone “Loading”/“Please wait” text prevent early settling. These are conservative readiness hints, not proof that a requested outcome is complete. The real-Chrome smoke test repeats a delayed-editor scenario with an intermediate loading message three times.
+
+Reachable controls are no longer dropped at 250 observation rows. Offscreen context retains a 250-row budget with explicit omission counts in planner and verifier inputs; scrolling brings those controls into the actionable set. Disabled and covered controls remain context. Extremely dense actionable pages can still produce large model inputs; model-context scalability requires separate measurement.
+
+Exact field assignments from the latest original user message can bypass text generation and content review: for example, `set Name to Ulka QA` or `fill the Name field with "Alice, Inc."`. This narrow grammar requires a unique, actionable, single-line field label. Native date inputs also accept explicit, valid ISO dates, such as `set Departure to "2026-10-05"`, without model calls. Ambiguous/conditional assignments, relative dates, date fields with unspecified formats, passwords and composed messages retain the existing model path. Planner-generated goals and page text cannot supply fast-path literals. Normal target freshness, action approval and final outcome checks still apply. Text generation has no imposed timeout; Stop cancellation remains supported. `text_literal` diagnostics record zero text-model calls without recording the value.
+
+
+### Performance path and measurement
+
+Jev predicts operation and multi-candidate targets together in one request, sharing decision rules once. Only the selected operation's compatible target executes. Settling uses DOM snapshots against a pre-action DOM baseline, with fast changed-state checks and backoff while unchanged. Before the next decision it refreshes accessibility semantics and target guards. Existing wait budgets, loading checks, cancellation and final verification remain.
+
+Text writing and review use Mercury 2.5 with reasoning disabled. This provider change requires access to that model through the saved Gateway key. There is no silent fallback to a different model and no new text timeout. Usage pricing distinguishes text stages from the planner.
+
+For a paid, alternating comparison of the old and new text model settings, provide `AI_GATEWAY_API_KEY` through your shell environment and run `bun scripts/eval/benchmark-text.ts 3`. The benchmark checks public synthetic city, search, departure, and return inputs, includes generation plus review, retains failures, and reports p50/p95. It does not automate a browser or establish end-to-end browser reliability. No API key is read from a browser profile or written to reports.
+
+Help & diagnostics → **Test model** now checks the actual field-text, native-date, content-review and verification schemas, alongside transport probes. These are synthetic model calls using the saved key, without browser actions. A provider/validation failure is distinguished from selecting the wrong field, preventing FX from repeating the same broken text request through another browser subgoal.
+
+Summarize a saved diagnostics export without printing page content: `bun scripts/eval/analyze-diagnostics.ts <export.json>`. The report flags incomplete log envelopes and overlapping timing categories. Do not add FX tool duration to the nested model/verification durations.
+
+### Selective completion checks
+
+Routine FX browser subgoals return **unverified checkpoints** with observed state instead of invoking a completion model each time. FX still verifies the whole task before reporting success. Subgoals that execute actions requiring approval retain their own completion check; Classic tasks retain task-level verification. Local target, schema, date and approval checks remain active.
+
+An exact request such as `Search for "James Webb Space Telescope"` can bypass both text generation and content review when one unambiguous search field is observed. Ambiguous or composed text keeps the model path. A checkpoint is never proof of success.
+
+### Task session and action allowance
+
+FX reuses one browser attachment across observations, page reads, browser subgoals and final verification. Observations remain fresh. Tab switches detach the previous target; native tab closure and navigation to internal pages release the attachment first. Task cleanup releases it after success, failure or cancellation.
+
+The former eight-action subgoal boundary is removed. Coherent sequences can continue within a shared task allowance of 30 executor attempts and 60 runner model steps. Provider retries can occur within a model step; FX planning and final verification have separate existing limits. The allowance survives subgoal handoffs and counts stale execution attempts, so changing subgoals cannot restart it. Exhaustion stops FX instead of triggering another recovery attempt. No model deadline was added.

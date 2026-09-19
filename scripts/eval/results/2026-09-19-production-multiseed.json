@@ -1,0 +1,161 @@
+{
+  "scope": "scripted runtime fixtures, no model calls",
+  "checks": [
+    {
+      "family": "context-click",
+      "seed": 0,
+      "success": true,
+      "action_ms": 770.0
+    },
+    {
+      "family": "form-fill",
+      "seed": 0,
+      "success": true,
+      "action_ms": 978.9
+    },
+    {
+      "family": "select",
+      "seed": 0,
+      "success": true,
+      "action_ms": 773.1
+    },
+    {
+      "family": "checkbox",
+      "seed": 0,
+      "success": true,
+      "action_ms": 770.3
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 0,
+      "success": true,
+      "action_ms": 2008.0
+    },
+    {
+      "family": "context-click",
+      "seed": 1,
+      "success": true,
+      "action_ms": 773.0
+    },
+    {
+      "family": "form-fill",
+      "seed": 1,
+      "success": true,
+      "action_ms": 979.2
+    },
+    {
+      "family": "select",
+      "seed": 1,
+      "success": true,
+      "action_ms": 774.7
+    },
+    {
+      "family": "checkbox",
+      "seed": 1,
+      "success": true,
+      "action_ms": 772.7
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 1,
+      "success": true,
+      "action_ms": 2518.2
+    },
+    {
+      "family": "context-click",
+      "seed": 2,
+      "success": true,
+      "action_ms": 774.0
+    },
+    {
+      "family": "form-fill",
+      "seed": 2,
+      "success": true,
+      "action_ms": 971.4
+    },
+    {
+      "family": "select",
+      "seed": 2,
+      "success": true,
+      "action_ms": 771.2
+    },
+    {
+      "family": "checkbox",
+      "seed": 2,
+      "success": true,
+      "action_ms": 774.4
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 2,
+      "success": true,
+      "action_ms": 2769.7
+    },
+    {
+      "family": "context-click",
+      "seed": 3,
+      "success": true,
+      "action_ms": 774.8
+    },
+    {
+      "family": "form-fill",
+      "seed": 3,
+      "success": true,
+      "action_ms": 978.5
+    },
+    {
+      "family": "select",
+      "seed": 3,
+      "success": true,
+      "action_ms": 774.4
+    },
+    {
+      "family": "checkbox",
+      "seed": 3,
+      "success": true,
+      "action_ms": 773.2
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 3,
+      "success": true,
+      "action_ms": 3027.5
+    },
+    {
+      "family": "context-click",
+      "seed": 17,
+      "success": true,
+      "action_ms": 776.8
+    },
+    {
+      "family": "form-fill",
+      "seed": 17,
+      "success": true,
+      "action_ms": 976.1
+    },
+    {
+      "family": "select",
+      "seed": 17,
+      "success": true,
+      "action_ms": 778.1
+    },
+    {
+      "family": "checkbox",
+      "seed": 17,
+      "success": true,
+      "action_ms": 774.6
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 17,
+      "success": true,
+      "action_ms": 2526.6
+    }
+  ],
+  "latency_ms": {
+    "p50": 774.8,
+    "p95": 2769.7
+  },
+  "wrong_action_success": 0,
+  "false_completion_success": 0
+}

@@ -26,10 +26,12 @@ export class ConversationPlanner {
     this.generate = generator ?? (generateStructuredText as GenerateFunction);
   }
 
-  async interpret(messages: ConversationMessage[]): Promise<ConversationIntent> {
+  async interpret(messages: ConversationMessage[], signal?: AbortSignal): Promise<ConversationIntent> {
+    signal?.throwIfAborted();
     if (!messages.length || messages.at(-1)?.role !== "user") throw new Error("Conversation needs a user message");
     const gateway = createGateway({ apiKey: this.apiKey });
     const result = await this.generate({
+      abortSignal: signal,
       model: gateway(LANGUAGE_MODEL),
       system: [
         TIME_RULES,
@@ -50,6 +52,7 @@ export class ConversationPlanner {
       output: Output.object({ schema: intentSchema, name: "ulka_conversation_intent" }),
       maxOutputTokens: 2_000,
     });
+    signal?.throwIfAborted();
     this.reportUsage?.("conversation", result.totalUsage ?? result.usage);
     return intentSchema.parse(result.output);
   }

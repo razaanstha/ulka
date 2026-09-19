@@ -38,3 +38,11 @@ test("unsafe schemes and internal command pages stay rejected", async () => {
     expect(() => validateNavigationUrl(url)).toThrow();
   }
 });
+
+test("Stop during navigation rejects even if the tab finishes loading", async () => {
+  const controller = new AbortController();
+  await expect(waitForNavigation(1, async () => {
+    controller.abort(new Error("Stopped"));
+    return [{ id: 1, url: "https://example.test", status: "complete" }];
+  }, 1000, controller.signal)).rejects.toThrow("Stopped");
+});

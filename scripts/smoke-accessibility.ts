@@ -61,6 +61,22 @@ try {
   await executor.execute(minimized, { operation: 'CLICK', target: opener!.id, confidence: 1 });
   const expanded = await observer.waitForChange(minimized);
   assert(expanded.elements.find(e => e.label === 'Write a message')?.operations.includes('TYPE_TEXT'), 'Editor did not become actionable after expanding chat');
+  // A stable loading message must not end settling before the editor mounts.
+  for (let trial = 0; trial < 3; trial++) {
+    await command('Runtime.evaluate', { expression: `document.body.innerHTML = '<button id="open-editor">Open editor</button><div id="loading-status"></div>'; document.getElementById('open-editor').onclick=()=>{ document.getElementById('loading-status').textContent='Loading'; setTimeout(()=>{document.getElementById('loading-status').textContent='Ready'; document.body.insertAdjacentHTML('beforeend','<input aria-label="Delayed destination">')},1200); };` }, sessionId);
+    const initial = await observer.observe();
+    await executor.execute(initial, { operation: 'CLICK', target: initial.elements.find(e => e.label === 'Open editor')!.id, confidence: 1 });
+    const settled = await observer.waitForChange(initial);
+    assert(settled.elements.some(e => e.label === 'Delayed destination'), 'Loading indicator caused premature settling');
+  }
+  // Dense pages must retain executable targets after the former 250-row limit.
+  await command('Runtime.evaluate', { expression: `document.body.innerHTML = '<div style="display:grid;grid-template-columns:repeat(25,24px);gap:1px">' + Array.from({length:300},(_,i)=>'<button aria-label="Action '+(i+1)+'" style="width:24px;height:24px;padding:0">'+(i+1)+'</button>').join('') + '</div>'; document.querySelector('button:last-child').onclick=()=>document.body.dataset.lastClicked='yes';` }, sessionId);
+  const dense = await observer.observe();
+  assert.equal(dense.elements.filter(e => e.operations.includes('CLICK')).length, 300);
+  const finalButton = dense.elements.find(e => e.label === 'Action 300')!;
+  await executor.execute(dense, { operation: 'CLICK', target: finalButton.id, confidence: 1 });
+  const clicked = await command('Runtime.evaluate', { expression: 'document.body.dataset.lastClicked', returnByValue: true }, sessionId);
+  assert.equal(clicked.result.value, 'yes', 'Last visible target must be executable, not merely listed');
   // Same-origin embedded app: LinkedIn mounts messaging in /preload/.
   await command('Runtime.evaluate', { expression: `document.body.innerHTML = '<iframe style="position:absolute;left:70px;top:90px;width:500px;height:350px;border:4px solid"></iframe>'; const frame = document.querySelector('iframe'); frame.contentDocument.body.innerHTML = '<div role="dialog" aria-label="Embedded conversation"><div contenteditable="true" role="textbox" aria-label="Embedded message" style="width:300px;height:100px;border:1px solid"><br></div><button disabled>Send</button></div>';` }, sessionId);
   const embedded = await observer.observe();

@@ -15,9 +15,15 @@ test('bounded verifier preserves decisive controls and prior evidence, logs metr
   const verifier = new OutcomeVerifier('test', undefined, (_stage, value) => usage.push(value), {
     log: (event, data) => events.push({ event, data }),
     generate: async input => {
-      expect(input.reasoning).toBe('low');
+      expect(input.reasoning).toBe('none');
       expect(input.maxRetries).toBe(0);
       expect(input.maxOutputTokens).toBe(4096);
+      expect(input.system).toContain('later corrections replace earlier constraints');
+      expect(input.system).toContain('committed search filters plus matching, settled result facts');
+      expect(input.system).toContain('unless the user requested complete itineraries or those details');
+      expect(input.system).toContain('If results are still loading');
+      expect(input.system).toContain('proposedAnswer');
+      expect(input.system).toContain('does not need to appear on the website');
       const payload = JSON.parse(input.prompt as string);
       const table = payload.controlSets[payload.page.elements.controlSetRef];
       const controls = table.rows.map((row: unknown[]) => Object.fromEntries(table.columns.map((key: string, i: number) => [key, row[i]])));

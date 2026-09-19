@@ -29,10 +29,14 @@ export async function waitForNavigation(
   tabId: number,
   readTabs: () => Promise<Array<{ id?: number; url?: string; status?: string }>>,
   timeoutMs = 30_000,
+  signal?: AbortSignal,
 ): Promise<void> {
+  signal?.throwIfAborted();
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const tab = (await readTabs()).find(item => item.id === tabId);
+    signal?.throwIfAborted();
     if (!tab) throw new Error("Task tab was closed during navigation.");
     if (tab.status === "complete" && tab.url) { validateNavigationUrl(tab.url); return; }
     await new Promise(resolve => setTimeout(resolve, 200));

@@ -58,7 +58,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     contexts.set(element, item);
     return item;
   };
-  const diagnostics = { modalScoped: !!dialog, candidates: 0, rejected: {}, iframeCount: document.querySelectorAll('iframe').length };
+  const diagnostics = { busy: [...root.querySelectorAll('[aria-busy="true"],progress:not([value]),[role="progressbar"]:not([aria-valuenow])')].some(element => visible(element)) || root.getAttribute('aria-busy') === 'true', omittedOffscreenControls: 0, modalScoped: !!dialog, candidates: 0, rejected: {}, iframeCount: document.querySelectorAll('iframe').length };
   const reject = (reason) => { diagnostics.rejected[reason] = (diagnostics.rejected[reason] || 0) + 1; };
   const axRecords = new Map(useAccessibility ? (cache.axRecords || []).map(record => [cache.axNodes.get(record.backendNodeId), record]).filter(([element]) => element?.isConnected) : []);
   const candidates = new Set(useAccessibility ? axRecords.keys() : root.querySelectorAll(selector));
@@ -77,6 +77,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
   // Reachable controls get the budget first; blocked AX controls remain context.
   const availability = new Map([...candidates].map(element => [element, unsafe(element) ? 'unsafe-input' : visibilityReason(element) || (element.matches(':disabled') || element.closest('[aria-disabled="true"]') ? 'disabled' : null) || (!interactionPoint(element) ? 'occluded' : null)]));
   const ordered = [...candidates].sort((a,b) => Number(!!availability.get(a)) - Number(!!availability.get(b)));
+  let offscreenControls = 0;
   for (const element of ordered) {
     // Prefer concrete child controls inside calendar cells. Observe a bare
     // gridcell only when it is itself the actionable target.
@@ -88,6 +89,9 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     const rect = element.getBoundingClientRect(), nodeId = identity(element), id = "e" + (elements.length + 1), elementRole = ax?.role || actionableRole(element);
 
     if (!elementRole) { reject('unsupported-role'); continue; }
+    // Never discard a reachable target to meet a context budget. Offscreen
+    // controls can be recovered by scrolling; report every omitted row.
+    if (reason === 'offscreen' && offscreenControls++ >= 250) { diagnostics.omittedOffscreenControls++; continue; }
     const label = (ax?.label || name(element)).replace(/\s+/g, " ").trim().slice(0, 500) || elementRole;
     const editable = ax?.properties.readonly !== true && !element.readOnly && element.getAttribute("aria-readonly") !== "true" && (["textbox", "searchbox", "spinbutton"].includes(elementRole) || (elementRole === "combobox" && element.tagName === "INPUT"));
     const downloadable = element.tagName === "A" && (element.hasAttribute("download") || /\.(pdf|zip|csv|json|xlsx?|docx?|pptx?)(?:$|\?)/i.test(element.href));
@@ -159,7 +163,6 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     if (!reason) guards[id] = { nodeId, role: actionableRole(element) || 'unknown', label: name(element).replace(/\s+/g,' ').trim().slice(0,500) || actionableRole(element) || 'unknown', value: item.value, enabled: true,
       ...(ax ? { accessibility: { backendNodeId: ax.backendNodeId, role: ax.axRole, name: ax.label } } : {}),
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
-    if (elements.length >= 250) break;
   }
   // Resolve ARIA relationships to current, visible action IDs only.
   const observedIds = new Map(elements.map(item => [cache.nodes.get(item.nodeId), item.id]));
@@ -189,32 +192,56 @@ export function observationExpression(accessibility: boolean) {
 
 export class CdpObserver {
   private accessibility: AccessibilitySource;
+  private settlingBaseline?: { snapshotId: string; page: PageSnapshot };
   constructor(
     private readonly api: ChromeDebuggerApi,
     private readonly target: Debuggee,
     private readonly pause: (milliseconds: number) => Promise<void> = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
+    private readonly now: () => number = () => performance.now(),
   ) { this.accessibility = new AccessibilitySource(api, target); }
   async waitForChange(before: PageSnapshot, stopped: () => boolean = () => false, timeoutMs = 3000): Promise<PageSnapshot> {
     let latest = before, stable = 0;
     // A click focuses its trigger immediately, before asynchronous panels mount.
     // Focus alone must not satisfy the content-change settling condition.
     const contentState = (page: PageSnapshot) => progressState({ ...page, elements: page.elements.map(({ focused: _focused, ...element }) => element) });
-    const initialState = contentState(before);
+    // Baseline and polls use the same DOM semantics. AX labels can differ;
+    // comparing them directly would manufacture a change before content arrives.
+    const baseline = this.settlingBaseline?.snapshotId === before.snapshotId ? this.settlingBaseline.page : before;
+    const useDomPolls = baseline !== before;
+    const initialState = contentState(baseline);
     let latestState = initialState;
-    const samples = Math.ceil(Math.max(250, Math.min(10000, timeoutMs)) / 250);
+    const budget = Math.max(250, Math.min(10000, timeoutMs));
+    const deadline = this.now() + budget;
+    const samples = Math.ceil(budget / (useDomPolls ? 50 : 250));
     // Wait for meaningful content/control changes, then two quiet samples.
     // Explicit WAIT gets a longer budget; no model calls inside polling.
     for (let attempt = 0; attempt < samples && !stopped(); attempt++) {
-      await this.pause(250);
-      if (stopped()) break;
-      const next = await this.observe();
+      const remaining = deadline - this.now();
+      if (remaining <= 0) break;
+      // Fast changed-state checks; back off while nothing useful arrives.
+      // Keep the existing deadline and loading checks rather than cut off slow UIs.
+      const interval = useDomPolls ? (latestState !== initialState ? 50 : Math.min(250, 50 * 2 ** Math.min(attempt, 3))) : 250;
+      await this.pause(Math.min(interval, remaining));
+      if (stopped() || this.now() >= deadline) break;
+      const raw = useDomPolls ? await evaluate<RawSnapshot | null>(this.api, this.target, observationExpression(false)) : undefined;
+      if (useDomPolls && !raw) continue;
+      const next = raw ? this.snapshot(raw) : await this.observe();
       const nextState = contentState(next);
       stable = nextState === latestState ? stable + 1 : 0;
       latestState = nextState;
       latest = next;
-      if (latestState !== initialState && stable >= 2) break;
+      // Stable loading indicators are intermediate states, not readiness.
+      // Text is a conservative fallback for sites without aria-busy.
+      const loading = next.diagnostics?.busy === true || next.text.split('\n').some(line => /^(?:loading|please wait)[\s.…!]*$/i.test(line.trim()));
+      if (latestState !== initialState && stable >= 2 && !loading) break;
     }
-    return latest;
+    // Poll snapshots never become decision input. Refresh AX and guards once,
+    // after settling, preserving custom controls and accessible names.
+    return useDomPolls && !stopped() ? this.observe() : latest;
+  }
+  private snapshot(raw: RawSnapshot): PageSnapshot {
+    const fingerprint = snapshotFingerprint(raw);
+    return { ...raw, fingerprint, snapshotId: `${raw.pageIdentity}:${fingerprint}:${Date.now()}`, createdAt: Date.now() };
   }
   async observe(): Promise<PageSnapshot> {
     for (let attempt = 0; attempt < 20; attempt++) {
@@ -222,8 +249,15 @@ export class CdpObserver {
       const raw = await evaluate<RawSnapshot | null>(this.api, this.target, observationExpression(accessibility.source === 'accessibility'));
       if (raw) {
         if (raw.diagnostics) Object.assign(raw.diagnostics, accessibility);
-        const fingerprint = snapshotFingerprint(raw);
-        return { ...raw, fingerprint, snapshotId: `${raw.pageIdentity}:${fingerprint}:${Date.now()}`, createdAt: Date.now() };
+        const snapshot = this.snapshot(raw);
+        this.settlingBaseline = undefined;
+        if (accessibility.source === 'accessibility') {
+          const dom = await evaluate<RawSnapshot | null>(this.api, this.target, observationExpression(false)).catch(() => null);
+          if (dom && dom.pageIdentity === raw.pageIdentity && dom.url === raw.url) {
+            this.settlingBaseline = { snapshotId: snapshot.snapshotId, page: this.snapshot(dom) };
+          }
+        }
+        return snapshot;
       }
       await this.pause(50);
     }

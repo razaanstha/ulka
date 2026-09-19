@@ -20,3 +20,28 @@ export class AttachedBrowser {
   }
   get tabId(): number { return this.target.tabId; }
 }
+
+// FX host tools are serialized. Reuse their attachment, not their page snapshots.
+export class TaskBrowserSession {
+  private browser?: AttachedBrowser;
+  private closed = false;
+  constructor(private readonly createBrowser: (tabId: number) => AttachedBrowser, private readonly signal: AbortSignal) {}
+  async get(tabId: number): Promise<AttachedBrowser> {
+    if (this.closed) throw new Error('Browser task session is closed');
+    this.signal.throwIfAborted();
+    this.browser ??= this.createBrowser(tabId);
+    if (this.browser.tabId !== tabId) await this.browser.switchTo(tabId);
+    else await this.browser.attach();
+    this.signal.throwIfAborted();
+    return this.browser;
+  }
+  async release(): Promise<void> {
+    if (!this.browser) return;
+    await this.browser.detach();
+    this.browser = undefined;
+  }
+  async close(): Promise<void> {
+    this.closed = true;
+    await this.release();
+  }
+}

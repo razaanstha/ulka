@@ -1,4 +1,4 @@
-import { LANGUAGE_MODEL } from './models';
+import { LANGUAGE_MODEL, TEXT_MODEL } from './models';
 import type { ModelPrices } from './model-pricing';
 
 export type UsageReporter = (stage: string, usage: unknown) => void;
@@ -25,7 +25,7 @@ export class ModelUsageLedger {
     const rows = Object.values(stages);
     let estimatedCostUsd = 0, pricedReports = 0, unpricedReports = 0;
     for (const [stage, row] of Object.entries(stages)) {
-      const price = this.prices[stage.startsWith('jev_') ? 'typesafe-ai/jev' : LANGUAGE_MODEL];
+      const price = this.prices[stage.startsWith('jev_') ? 'typesafe-ai/jev' : ['text_generation', 'text_content_review'].includes(stage) ? TEXT_MODEL : LANGUAGE_MODEL];
       if (!price) { unpricedReports += row.reports; continue; }
       // A missing report is not a measured zero-token request.
       if (row.missingUsageReports < row.reports || row.inputTokens > 0 || row.outputTokens > 0) pricedReports += row.reports;

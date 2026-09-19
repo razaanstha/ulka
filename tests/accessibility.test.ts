@@ -110,3 +110,23 @@ test('AX source reads child-frame trees and maps same-origin nodes into top cach
   expect(mapped).toHaveLength(2);
   expect(mapped.every(fn => fn.includes('window.top.__ulkaAgent.axNodes'))).toBe(true);
 });
+
+test('offscreen context budget reports omissions and never crowds out reachable targets', () => {
+  const w = new Window({ url: 'https://example.test' });
+  w.document.body.innerHTML = Array.from({ length: 301 }, (_, i) => `<button>Action ${i}</button>`).join('');
+  const buttons = [...w.document.querySelectorAll('button')];
+  Object.defineProperties(w, { innerWidth: { value: 800 }, innerHeight: { value: 600 }, scrollY: { value: 0 } });
+  for (const [i, button] of buttons.entries()) {
+    const y = i === 300 ? 10 : 1000 + i * 30;
+    Object.defineProperty(button, 'getBoundingClientRect', { value: () => ({ x: 10, y, left: 10, top: y, right: 210, bottom: y + 20, width: 200, height: 20 }) });
+  }
+  Object.defineProperty(w.document, 'elementFromPoint', { value: () => buttons[300] });
+  const nodes: AXNode[] = buttons.map((_, i) => ({ nodeId: String(i), backendDOMNodeId: i + 1, role: { value: 'button' }, name: { value: `Action ${i}` } }));
+  (w as any).__ulkaAgent = { ids: new WeakMap(), nodes: new Map(), next: 1, axNodes: new Map(buttons.map((button, i) => [i + 1, button])), axRecords: accessibilityRecords(nodes), axText: '' };
+  const snapshot = w.eval(observationExpression(true)) as PageSnapshot;
+  expect(snapshot.elements).toHaveLength(251);
+  expect(snapshot.diagnostics?.omittedOffscreenControls).toBe(50);
+  expect(snapshot.diagnostics?.candidates).toBe(301);
+  expect(snapshot.elements.find(e => e.label === 'Action 300')?.operations).toContain('CLICK');
+  expect(snapshot.elements.filter(e => e.availability === 'offscreen')).toHaveLength(250);
+});

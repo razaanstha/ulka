@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { createGateway, Output } from 'ai';
 import { z } from 'zod';
-import { generateStructuredText } from '../apps/extension/src/agent/structured-generation';
+import { generateStructuredText, structuredFailureDetails } from '../apps/extension/src/agent/structured-generation';
 
 function testGateway(options: { apiKey: string; fetch: (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response> }) {
   return createGateway({ ...options, fetch: Object.assign(options.fetch, { preconnect: fetch.preconnect }) });
@@ -28,9 +28,11 @@ function response(text: string) {
 test('structured Gateway requests stream and return complete validated output with usage', async () => {
   const gateway = testGateway({ apiKey: 'test', fetch: async (_url, init) => {
     expect(new Headers(init?.headers).get('ai-language-model-streaming')).toBe('true');
+    expect(JSON.parse(String(init?.body)).providerOptions).toEqual({ gateway: { zeroDataRetention: false, order: ['test-provider'] }, other: { mode: 'kept' } });
     return response(JSON.stringify({ satisfied: true, evidence: 'Observed result' }));
   } });
-  const result = await generateStructuredText({ model: gateway('deepseek/deepseek-v4.1-flash'), prompt: 'Verify', output: Output.object({ schema }), maxRetries: 0 });
+  const result = await generateStructuredText({ model: gateway('deepseek/deepseek-v4.1-flash'), prompt: 'Verify', output: Output.object({ schema }), maxRetries: 0,
+    providerOptions: { gateway: { zeroDataRetention: true, order: ['test-provider'] }, other: { mode: 'kept' } } });
   expect(result.output).toEqual({ satisfied: true, evidence: 'Observed result' });
   expect(result.totalUsage).toMatchObject({ inputTokens: 10, outputTokens: 5 });
 });
@@ -73,4 +75,70 @@ test('cancellation during a partial stream never returns a verdict', async () =>
     return new Response(stream, { headers: { 'content-type': 'text/event-stream' } });
   } });
   await expect(generateStructuredText({ model: gateway('deepseek/deepseek-v4.1-flash'), prompt: 'Verify', output: Output.object({ schema }), abortSignal: controller.signal, maxRetries: 0 })).rejects.toThrow('User stopped mid-stream');
+});
+
+test('Stop releases structured generation even when transport ignores cancellation', async () => {
+  const controller = new AbortController();
+  let started!: () => void;
+  const requested = new Promise<void>(resolve => { started = resolve; });
+  const gateway = testGateway({ apiKey: 'test', fetch: async () => {
+    started();
+    return new Promise<Response>(() => {});
+  } });
+  const result = generateStructuredText({ model: gateway('deepseek/deepseek-v4.1-flash'), prompt: 'Verify', output: Output.object({ schema }), abortSignal: controller.signal, maxRetries: 0 })
+    .then(() => 'incorrect success', error => error.message);
+  await requested;
+  controller.abort(new Error('User stopped stalled transport'));
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const outcome = await Promise.race([result, new Promise<string>(resolve => { timer = setTimeout(() => resolve('still blocked'), 100); })]);
+    expect(outcome).toBe('User stopped stalled transport');
+  } finally { clearTimeout(timer); }
+});
+
+test('late valid output cannot turn a cancelled request into success', async () => {
+  const controller = new AbortController();
+  let started!: () => void, complete!: (response: Response) => void;
+  const requested = new Promise<void>(resolve => { started = resolve; });
+  const gateway = testGateway({ apiKey: 'test', fetch: async () => {
+    started();
+    return new Promise<Response>(resolve => { complete = resolve; });
+  } });
+  let accepted = false;
+  const result = generateStructuredText({ model: gateway('deepseek/deepseek-v4.1-flash'), prompt: 'Verify', output: Output.object({ schema }), abortSignal: controller.signal, maxRetries: 0 })
+    .then(() => { accepted = true; }, error => error.message);
+  await requested;
+  controller.abort(new Error('Stopped'));
+  expect(await result).toBe('Stopped');
+  complete(response(JSON.stringify({ satisfied: true, evidence: 'Late response' })));
+  await new Promise(resolve => setTimeout(resolve, 10));
+  expect(accepted).toBe(false);
+});
+
+test('structured requests explicitly include the JSON contract in system instructions', async () => {
+  const gateway = testGateway({ apiKey: 'test', fetch: async (_url, init) => {
+    const body = JSON.parse(String(init?.body));
+    const system = body.prompt.filter((message: any) => message.role === 'system').map((message: any) => message.content).join('\n');
+    expect(system).toContain('Return only a JSON object');
+    expect(system).toContain('"satisfied"');
+    expect(system).toContain('"required"');
+    expect(system).toContain('"evidence"');
+    return response(JSON.stringify({ satisfied: false, evidence: 'Missing result' }));
+  } });
+  expect((await generateStructuredText({ model: gateway('inception/mercury-2.5'), system: 'Verify independently.', prompt: 'Check', output: Output.object({ schema }), maxRetries: 0 })).output).toEqual({ satisfied: false, evidence: 'Missing result' });
+});
+
+
+test('schema diagnostics expose types and paths without leaking values or unknown keys', async () => {
+  const gateway = testGateway({ apiKey: 'test', fetch: async () => response(JSON.stringify({ satisfied: 'PRIVATE-VALUE', evidence: 42, 'PRIVATE-KEY': 'SECRET' })) });
+  let failure: unknown;
+  try {
+    await generateStructuredText({ model: gateway('inception/mercury-2.5'), prompt: 'Verify', output: Output.object({ schema }), maxRetries: 0 });
+  } catch (error) { failure = error; }
+  expect(failure).toBeDefined();
+  const details = structuredFailureDetails(failure);
+  expect(details).toMatchObject({ jsonType: 'object', fieldTypes: { satisfied: 'string', evidence: 'number' }, unknownFieldCount: 1 });
+  expect(details.schemaIssues).toEqual(expect.arrayContaining([{ code: 'invalid_type', path: ['satisfied'] }, { code: 'invalid_type', path: ['evidence'] }]));
+  expect(JSON.stringify(details)).not.toContain('PRIVATE');
+  expect(JSON.stringify(details)).not.toContain('SECRET');
 });

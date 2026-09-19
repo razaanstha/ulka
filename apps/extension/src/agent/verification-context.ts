@@ -7,7 +7,8 @@ import type { ActionRecord, PageSnapshot } from '../../../../packages/protocol/s
 export function verificationContext(goal: string, page: PageSnapshot, history: ActionRecord[], evidence: TaskEvidence[]) {
   const contexts: unknown[] = [];
   const contextIds = new Map<string, number>();
-  const controlSets: Array<{ columns: string[]; rows: unknown[][] }> = [];
+  const controlSets: Array<{ columns: string[]; rows: Array<unknown[] | number>; baseControlSetRef?: number }> = [];
+  const bases: Array<{ id: number; columns: string; rows: Map<string, number> }> = [];
   const controlIds = new Map<string, number>();
   const packControls = (controls: Record<string, unknown>[]) => {
     const records = controls.map(control => {
@@ -31,7 +32,26 @@ export function verificationContext(goal: string, page: PageSnapshot, history: A
     }) };
     const key = JSON.stringify(table);
     let id = controlIds.get(key);
-    if (id === undefined) { id = controlSets.length; controlIds.set(key, id); controlSets.push(table); }
+    if (id === undefined) {
+      id = controlSets.length;
+      controlIds.set(key, id);
+      // Reuse identical rows across slightly different observations, including
+      // reordering/removal. References point only to full tables, never chains.
+      let encoded: typeof controlSets[number] = table;
+      let size = key.length;
+      const columnKey = JSON.stringify(columns);
+      const rowKeys = table.rows.map(row => JSON.stringify(row));
+      for (const base of bases) {
+        if (base.columns !== columnKey) continue;
+        const candidate = { columns, baseControlSetRef: base.id,
+          rows: table.rows.map((row, i) => base.rows.get(rowKeys[i]) ?? row) };
+        const candidateSize = JSON.stringify(candidate).length;
+        if (candidateSize < size) { encoded = candidate; size = candidateSize; }
+      }
+      controlSets.push(encoded);
+      if (encoded.baseControlSetRef === undefined) bases.push({ id, columns: columnKey,
+        rows: new Map(rowKeys.map((row, index) => [row, index])) });
+    }
     return { controlSetRef: id };
   };
   const pack = (value: unknown): unknown => {
@@ -48,7 +68,7 @@ export function verificationContext(goal: string, page: PageSnapshot, history: A
     return { ...item, result };
   });
   return { goal, page: pack(modelPage(page)), recentActions: modelHistory(history), taskEvidence: pack(taskEvidence),
-    encoding: 'controlSetRef indexes controlSets; rows align with columns; null or missing trailing cells mean absent. contextRef indexes contexts. Tables retain all observed controls and their state; execution operations are omitted. Earlier evidence is chronological and may be superseded by later observations.',
+    encoding: 'controlSetRef indexes controlSets; array rows align with columns; null or missing trailing cells mean absent. If a table has baseControlSetRef, each integer row copies that row index from the referenced full table; array rows are the changed/new rows. Row order and removals are represented exactly. contextRef indexes contexts. Tables retain all observed controls and their state; execution operations are omitted. Earlier evidence is chronological and may be superseded by later observations.',
     controlSets, contexts,
   };
 }

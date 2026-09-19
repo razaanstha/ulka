@@ -1,5 +1,5 @@
 export type AgentState = "IDLE" | "ATTACHING" | "OBSERVING" | "DECIDING" | "GENERATING_TEXT" |
-  "VALIDATING" | "EXECUTING" | "WAITING" | "PAUSED" | "DONE" | "BLOCKED" | "STOPPED" | "ERROR";
+  "CHECKPOINT" | "VALIDATING" | "VERIFYING" | "EXECUTING" | "WAITING" | "PAUSED" | "DONE" | "BLOCKED" | "STOPPED" | "ERROR";
 
 export class AgentStateMachine {
   private current: AgentState = "IDLE";

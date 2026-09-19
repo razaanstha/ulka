@@ -57,7 +57,7 @@ test('approved field content is returned unchanged after independent review', as
   expect(await engine.generate('Draft a message asking Raju to review the attached schedule. Do not send.', page.elements[1], page, [])).toBe(candidate);
   expect(JSON.parse(requests[1].prompt).candidate).toBe(candidate);
   expect(stages).toEqual(['text_generation','text_content_review']);
-  expect(requests.every(request => request.reasoning === 'low' && request.maxRetries === 0)).toBe(true);
+  expect(requests.every(request => request.reasoning === 'none' && request.model.modelId === 'deepseek/deepseek-v4.1-flash' && request.maxRetries === 0)).toBe(true);
 });
 
 test('text generation and review expose separate costs without logging candidates', async () => {
@@ -141,4 +141,84 @@ test('cancellation after rejected candidate prevents regeneration', async () => 
   const request=async()=>{if(++calls===1)return {output:{suitable:true,reason:'Field',text:'Wrong instructions'}};controller.abort(new Error('Stopped'));return {output:{approved:false,reason:'Instructions'}};};
   await expect(new TextGenerator('test',controller.signal,undefined,request as never).generate('Draft message',page.elements[1],page,[])).rejects.toThrow('Stopped');
   expect(calls).toBe(2);
+});
+
+test('multi-step literal assignment uses the current goal and content review', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const field = { id: 'name', nodeId: 1, role: 'textbox', label: 'Name', operations: ['TYPE_TEXT' as const] };
+  const requests: any[] = [];
+  const engine = new TextGenerator('test', undefined, undefined, async input => {
+    const payload = JSON.parse(input.prompt as string);
+    requests.push(payload);
+    expect(payload.goal).toBe('Set Name to Bob');
+    return { output: requests.length === 1
+      ? { suitable: true, reason: 'Later requested value', text: 'Bob' }
+      : { approved: true, reason: 'Matches current goal' } };
+  }, undefined, 'Set Name to Alice; then set it to Bob');
+  expect(await engine.generate('Set Name to Bob', field, { ...page, elements: [field] }, [])).toBe('Bob');
+  expect(requests).toHaveLength(2);
+  expect(requests[1].candidate).toBe('Bob');
+});
+
+test('explicit user field assignment needs no model calls', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const field = { ...page.elements[0], role: 'textbox', label: 'Name' };
+  const snapshot = { ...page, elements: [field] };
+  let calls = 0;
+  const request = async () => { calls++; throw new Error('Unexpected model request'); };
+  const writer = new TextGenerator('test', undefined, undefined, request, undefined,
+    'Set Name to Ulka QA');
+  expect(await writer.generate('Fill the name', field, snapshot, [])).toBe('Ulka QA');
+  expect(calls).toBe(0);
+});
+
+test('explicit ISO assignment to a native date uses no generation or review calls', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const departure = { ...page.elements[0], role: 'textbox', label: 'Departure', inputType: 'date' };
+  const returning = { ...departure, id: 'e3', nodeId: 3, label: 'Return' };
+  const snapshot = { ...page, elements: [departure, returning] };
+  let calls = 0;
+  const request = async () => { calls++; throw new Error('Unexpected model request'); };
+  const writer = new TextGenerator('test', undefined, undefined, request, undefined,
+    'Set Departure to "2026-10-05"');
+  expect(await writer.generate('Fill departure', departure, snapshot, [])).toBe('2026-10-05');
+  const returnWriter = new TextGenerator('test', undefined, undefined, request, undefined,
+    'Set Return to "2026-10-12"');
+  expect(await returnWriter.generate('Fill return', returning, snapshot, [])).toBe('2026-10-12');
+  expect(calls).toBe(0);
+});
+
+ test('Stop releases text generation without a timer even if transport ignores abort', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const controller = new AbortController();
+  const writer = new TextGenerator('test', controller.signal, undefined, async () => new Promise<never>(() => {}));
+  const pending = writer.generate('Draft message', page.elements[1], page, []);
+  controller.abort(new Error('Stopped'));
+  await expect(pending).rejects.toThrow('Stopped');
+});
+
+test('exhausted malformed generation reports service failure, not wrong field, and never types', async () => {
+  let calls = 0, executions = 0;
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const writer = new TextGenerator('test', undefined, undefined, async () => { calls++; return { output: { text: 'Missing required fields' } }; });
+  const runner = new AgentRunner({ observe: async () => page } as never,
+    { decide: async () => ({ operation: 'TYPE_TEXT', target: 'e1', confidence: 1 }) },
+    { execute: async () => { executions++; } } as never, undefined, {}, writer);
+  const result = await runner.run('Search');
+  expect(result.failure).toBe('text_generation_unavailable');
+  expect(result.status).toBe('blocked');
+  expect(result.reason).not.toContain('target rejected');
+  expect(calls).toBe(2);
+  expect(executions).toBe(0);
+});
+
+test('exact quoted search skips both generation and review', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const search = { ...page.elements[0], label: 'Search Wikipedia' };
+  const snapshot = { ...page, elements: [search] };
+  let calls = 0;
+  const request = async () => { calls++; throw new Error('Unexpected request'); };
+  const writer = new TextGenerator('test', undefined, undefined, request, undefined, 'Search for "James Webb Space Telescope"');
+  expect(await writer.generate('Search for the requested article', search, snapshot, [])).toBe('James Webb Space Telescope');
+  expect(calls).toBe(0);
 });

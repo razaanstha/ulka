@@ -1,0 +1,41 @@
+{
+  "scope": "scripted runtime fixtures, no model calls",
+  "checks": [
+    {
+      "family": "context-click",
+      "seed": 3,
+      "success": true,
+      "action_ms": 766.9
+    },
+    {
+      "family": "form-fill",
+      "seed": 3,
+      "success": true,
+      "action_ms": 980.1
+    },
+    {
+      "family": "select",
+      "seed": 3,
+      "success": true,
+      "action_ms": 765.9
+    },
+    {
+      "family": "checkbox",
+      "seed": 3,
+      "success": true,
+      "action_ms": 769.0
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 3,
+      "success": true,
+      "action_ms": 3034.1
+    }
+  ],
+  "latency_ms": {
+    "p50": 769.0,
+    "p95": 3034.1
+  },
+  "wrong_action_success": 0,
+  "false_completion_success": 0
+}

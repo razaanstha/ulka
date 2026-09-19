@@ -1,6 +1,8 @@
 import type { UsageSummary } from './agent/model-usage';
 
-export function renderUsage(element: HTMLElement, usage?: UsageSummary, running = false, incomplete = false) {
+export function renderUsage(element: HTMLElement, usage?: UsageSummary, running = false, incomplete = false, elapsedMs?: number) {
+  const seconds = typeof elapsedMs === 'number' && Number.isFinite(elapsedMs) && elapsedMs >= 0 ? Math.round(elapsedMs / 1000) : undefined;
+  const duration = seconds === undefined ? '' : ` · ${seconds < 60 ? `${seconds}s` : `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, '0')}s`}`;
   element.className = 'usage-summary';
   element.setAttribute('role', 'status');
   element.setAttribute('aria-live', 'polite');
@@ -12,9 +14,10 @@ export function renderUsage(element: HTMLElement, usage?: UsageSummary, running 
     const breakdown = `${usage.inputTokens.toLocaleString('en-US')} in / ${usage.outputTokens.toLocaleString('en-US')} out`;
     const partial = incomplete || usage.missingUsageReports > 0 || usage.unpricedReports > 0;
     const cost = usage.estimatedCostUsd === null ? 'Cost unavailable' : usage.estimatedCostUsd > 0 && usage.estimatedCostUsd < 0.0001 ? 'Est. <$0.0001' : `Est. $${usage.estimatedCostUsd.toFixed(4)}`;
-    element.textContent = `${tokens} · ${breakdown} · ${cost}${partial ? ' · Partial' : ''}${running ? ' · Updating' : ''}`;
+    element.textContent = `${tokens} · ${breakdown} · ${cost}${duration}${partial ? ' · Partial' : ''}${running ? ' · Updating' : ''}`;
   }
   element.title = 'Updates when model usage is reported; FX planner totals arrive at turn end. ' +
     (usage ? `${usage.coverage} ${usage.costBasis}` : 'No usage report received yet.') +
-    (incomplete ? ' This run ended early; some usage may be missing.' : '');
+    (incomplete ? ' This run ended early; some usage may be missing.' : '') +
+    (seconds === undefined ? '' : ' Time is total elapsed from submission to completion or interruption, including verification and any waits.');
 }

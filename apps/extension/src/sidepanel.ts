@@ -1,4 +1,6 @@
 import { preservePartialResponse } from './partial-response';
+import { performanceSummary } from './performance-summary';
+import { formatConnectionChecks, type ConnectionCheckSummary } from './model-connection-summary';
 import { createUserQuestionPanel } from './user-question-panel';
 import type { PendingQuestion } from './agent/user-question';
 import type { UsageSummary } from "./agent/model-usage";
@@ -19,7 +21,7 @@ const state = document.querySelector<HTMLElement>("#state")!;
 const chat = document.querySelector<HTMLElement>("#chat")!;
 const chatScroll = createChatScroll(chat);
 const trace = document.querySelector<HTMLElement>("#trace")!;
-type ChatMessage = ConversationMessage & { usage?: UsageSummary; usageIncomplete?: boolean; clarification?: { question: string; answer: string } };
+type ChatMessage = ConversationMessage & { usage?: UsageSummary; usageIncomplete?: boolean; elapsedMs?: number; clarification?: { question: string; answer: string } };
 const messages: ChatMessage[] = [];
 let usageElement: HTMLElement | undefined;
 let currentUsage: UsageSummary | undefined;
@@ -115,7 +117,7 @@ function renderHistory() {
     const copy = document.createElement('span'); copy.className = 'history-entry-copy'; copy.append(title, preview);
     const indicator = document.createElement('span'); indicator.className = 'history-entry-indicator'; indicator.setAttribute('aria-hidden', 'true'); indicator.textContent = entry.id === currentId ? '✓' : '›';
     button.append(copy, indicator); button.title = entry.title;
-    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) { appendMessage(message.role, message.content, false, message.clarification); if (message.role === "assistant") appendUsage(message.usage, false, message.usageIncomplete); } chatScroll.bottom(); closeHistory(); prompt.focus(); });
+    button.addEventListener('click', () => { if (busy) return; currentId = entry.id; messages.splice(0, messages.length, ...entry.messages); chat.replaceChildren(); for (const message of messages) { appendMessage(message.role, message.content, false, message.clarification); if (message.role === "assistant") appendUsage(message.usage, false, message.usageIncomplete, message.elapsedMs); } chatScroll.bottom(); closeHistory(); prompt.focus(); });
     historyList.append(button);
   }
 }
@@ -177,16 +179,33 @@ document.querySelector("#settings-toggle")!.addEventListener("click", event => {
 });
 document.querySelectorAll<HTMLButtonElement>("[data-prompt]").forEach(button => button.addEventListener("click", () => { prompt.value = button.dataset.prompt!; prompt.focus(); }));
 const logStatus = diagnostics.querySelector<HTMLElement>("#log-status")!;
+diagnostics.querySelector('#show-performance')!.addEventListener('click', async () => {
+  const stored = await chromeApi.storage.local.get(LOG_KEY);
+  const build = await fetch('build-info.json').then(response => response.json()).catch(() => null);
+  const output = diagnostics.querySelector('#performance-summary')!;
+  output.replaceChildren();
+  const line = (value: unknown) => {
+    const row = document.createElement('div');
+    row.textContent = typeof value === 'string' ? value : JSON.stringify(value);
+    output.append(row);
+  };
+  line({ exporterBuild: build });
+  line('Timings overlap; do not add stages. Outside-tool time includes model work. Exporter build does not identify earlier runs.');
+  for (const { stages, ...run } of performanceSummary(Array.isArray(stored[LOG_KEY]) ? stored[LOG_KEY] : [])) {
+    line(run);
+    for (const stage of stages) line(stage);
+  }
+});
 diagnostics.querySelector<HTMLButtonElement>('#test-model')!.addEventListener('click', async event => {
   const button = event.currentTarget as HTMLButtonElement;
   button.disabled = true;
   logStatus.textContent = 'Testing model connection…';
   try {
     const response = await chromeApi.runtime.sendMessage({ type: 'TEST_MODEL' }) as {
-      ok: boolean; error?: string; results?: Array<{ check: string; status: string; transport: { status?: number } }>;
+      ok: boolean; error?: string; results?: ConnectionCheckSummary[];
     };
     if (!response.ok) throw new Error(response.error ?? 'Model test failed');
-    logStatus.textContent = response.results!.map(result => `${result.check}: ${result.status}${result.transport.status ? ` (HTTP ${result.transport.status})` : ''}`).join('; ') + '. Copy logs for details.';
+    logStatus.textContent = formatConnectionChecks(response.results!);
   } catch (error) { logStatus.textContent = error instanceof Error ? error.message : 'Model test failed'; }
   finally { button.disabled = false; }
 });
@@ -205,8 +224,19 @@ diagnostics.querySelector("#download-logs")!.addEventListener("click", async () 
   } catch { logStatus.textContent = "Could not export logs. Try reopening Ulka."; }
 });
 diagnostics.querySelector("#copy-logs")!.addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText(await report()); logStatus.textContent = "Logs copied."; }
-  catch { logStatus.textContent = "Clipboard unavailable. Use Download logs."; }
+  const fallback = diagnostics.querySelector<HTMLTextAreaElement>('#copy-logs-fallback')!;
+  try {
+    const text = await report();
+    try {
+      await navigator.clipboard.writeText(text);
+      fallback.hidden = true; fallback.value = '';
+      logStatus.textContent = 'Logs copied.';
+    } catch {
+      fallback.hidden = false; fallback.value = text;
+      fallback.focus(); fallback.select();
+      logStatus.textContent = 'Automatic clipboard access unavailable. Logs selected below; press Command+C or Ctrl+C to copy.';
+    }
+  } catch { logStatus.textContent = 'Could not prepare logs. Try reopening Ulka.'; }
 });
 void chromeApi.storage.local.get("vercelAiGatewayApiKey").then((stored) => {
   if (typeof stored.vercelAiGatewayApiKey === "string" && stored.vercelAiGatewayApiKey) {
@@ -225,6 +255,7 @@ document.querySelector("#send")!.addEventListener("click", async () => {
   document.querySelector("#welcome")?.remove();
   busy = true; document.body.dataset.busy = "true"; send.disabled = true; engine.disabled = true; taskMode.disabled = true; stop.hidden = false;
   const started = Date.now();
+  document.querySelector('#elapsed')!.textContent = '0s';
   const timer = setInterval(() => { document.querySelector("#elapsed")!.textContent = `${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
   messages.push({ role: "user", content }); appendMessage("user", content); chatScroll.bottom(); prompt.value = ""; prompt.style.height = ""; state.textContent = "Thinking"; trace.textContent = ""; progress.textContent = "Understanding your request";
   thinking = document.createElement('details'); thinking.className = 'thinking-box'; thinking.open = true; thinking.hidden = true;
@@ -244,9 +275,10 @@ document.querySelector("#send")!.addEventListener("click", async () => {
     logStatus.textContent = "Connection failed. Download logs and include this error.";
   }
   currentUsage = response.usage ?? currentUsage;
+  const elapsedMs = Math.max(0, Date.now() - started);
   const runStatus = response.result?.status ?? response.result?.result?.status;
   const usageIncomplete = !response.ok || runStatus === 'stopped' || runStatus === 'blocked';
-  renderUsage(usageElement!, currentUsage, false, usageIncomplete);
+  renderUsage(usageElement!, currentUsage, false, usageIncomplete, elapsedMs);
   usageElement = undefined; usageRequestId = undefined;
   const remainingReply = (text: string) => committedReply && text.startsWith(committedReply) ? text.slice(committedReply.length).trimStart() : text;
   const finalReply = response.ok ? remainingReply(response.result?.reply ?? "Done.") : response.error ?? "Request failed";
@@ -263,7 +295,7 @@ document.querySelector("#send")!.addEventListener("click", async () => {
     thinking.querySelector('summary')!.textContent = usageIncomplete ? 'Thinking interrupted' : 'Thinking finished';
   }
   thinking = undefined; thinkingBody = undefined; thinkingScroll = undefined;
-  messages.push({ role: "assistant", content: reply, usage: currentUsage, usageIncomplete }); renderMarkdown(streaming!, reply); streaming!.classList.remove("streaming"); streaming!.classList.toggle("error", !response.ok); streaming = undefined;
+  messages.push({ role: "assistant", content: reply, usage: currentUsage, usageIncomplete, elapsedMs }); renderMarkdown(streaming!, reply); streaming!.classList.remove("streaming"); streaming!.classList.toggle("error", !response.ok); streaming = undefined;
   saveConversation(); newButton.disabled = false;
   clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; taskMode.disabled = false; stop.hidden = true;
   if (approval.open) approval.close();
@@ -338,9 +370,9 @@ function appendMessage(role: "user" | "assistant", content: string, error = fals
   return element;
 }
 
-function appendUsage(usage?: UsageSummary, running = false, incomplete = false) {
+function appendUsage(usage?: UsageSummary, running = false, incomplete = false, elapsedMs?: number) {
   const element = document.createElement('div');
-  renderUsage(element, usage, running, incomplete);
+  renderUsage(element, usage, running, incomplete, elapsedMs);
   chatScroll.update(() => chat.append(element));
   return element;
 }

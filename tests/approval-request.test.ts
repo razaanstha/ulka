@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, test, spyOn } from 'bun:test';
 import { ApprovalGate, createApprovalRequest, formatApprovalRequest } from '../apps/extension/src/agent/approval-request';
 import type { PageSnapshot } from '../packages/protocol/src';
 
@@ -46,4 +46,15 @@ test('approval expiration and publication failures fail closed', async () => {
   const pending = gate.request('stopped', async () => {});
   gate.cancel();
   expect(await pending).toBe(false);
+});
+
+test('default approval waits for an explicit choice without an expiry timer', async () => {
+  const gate = new ApprovalGate();
+  const timers = spyOn(globalThis, 'setTimeout');
+  try {
+    const pending = gate.request('human-choice', async () => {});
+    expect(timers).not.toHaveBeenCalled();
+    expect(gate.respond('human-choice', true)).toBe(true);
+    expect(await pending).toBe(true);
+  } finally { gate.cancel(); timers.mockRestore(); }
 });

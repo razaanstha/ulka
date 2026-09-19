@@ -20,10 +20,12 @@
     </div>
     <details class="settings-section"><summary>Advanced</summary><label for="engine">Agent engine</label><select id="engine"><option value="fx">fx + Jev</option><option value="classic">Classic</option></select></details>
     <details id="diagnostics" class="settings-section"><summary>Help & diagnostics</summary>
-      <button id="test-model">Test model</button><p class="hint">Four small checks. Uses API credits; no browser actions.</p>
+      <button id="test-model">Test model</button><p class="hint">Seven small checks. Uses API credits; no browser actions.</p>
       <div class="settings-log-actions"><button id="download-logs">Download logs</button><button id="copy-logs">Copy logs</button></div>
+      <textarea id="copy-logs-fallback" aria-label="Diagnostics ready to copy" readonly hidden rows="4" style="width:100%;box-sizing:border-box"></textarea>
       <p class="hint">Logs may contain page details. Review before sharing.</p>
       <p id="log-status" class="hint" role="status"></p><details><summary>Developer trace</summary><pre id="trace"></pre></details>
+      <button id="show-performance">Show performance</button><pre id="performance-summary"></pre>
     </details>
   </section>
   <main id="chat" class="chat" role="log" aria-live="polite" aria-label="Conversation"><section id="welcome"><h2>What’s the task?</h2><p>Ask anything about your browser.</p></section></main>

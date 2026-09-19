@@ -1,0 +1,230 @@
+{
+  "scope": "Exported diagnostics only. Event buffers may omit starts or terminal outcomes. Timings overlap: tool, text, decision and verification durations must not be summed together. Verification durations are cumulative from check start, including retries. Outside-tool time includes model work and is not isolated FX runtime overhead.",
+  "runs": [
+    {
+      "runId": "21d077cb-344c-429f-8e18-4f87c9354aa7",
+      "first": "2026-09-19T06:59:20.959Z",
+      "last": "2026-09-19T07:02:46.673Z",
+      "requestSeen": false,
+      "metrics": {
+        "jev_decision": {
+          "count": 5,
+          "totalMs": 3805.399999856949,
+          "minMs": 482.60000014305115,
+          "maxMs": 1176.6999998092651
+        },
+        "verification_error_elapsed": {
+          "count": 3,
+          "totalMs": 145310.79999995232,
+          "minMs": 16597.700000047684,
+          "maxMs": 74016.5
+        },
+        "verification_completed_elapsed": {
+          "count": 2,
+          "totalMs": 170599.09999990463,
+          "minMs": 78089.09999990463,
+          "maxMs": 92510
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 193826.39999985695,
+          "minMs": 193826.39999985695,
+          "maxMs": 193826.39999985695
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 184897.39999961853,
+          "minMs": 184897.39999961853,
+          "maxMs": 184897.39999961853
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 8929.000000238419,
+          "minMs": 8929.000000238419,
+          "maxMs": 8929.000000238419
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 0,
+      "textModels": [],
+      "terminalStatus": "stopped",
+      "completeEnvelope": false
+    },
+    {
+      "runId": "8a4c71d3-ac89-4316-95e5-0e9fe9a31a42",
+      "first": "2026-09-19T07:03:14.810Z",
+      "last": "2026-09-19T07:04:17.138Z",
+      "requestSeen": true,
+      "metrics": {
+        "jev_decision": {
+          "count": 1,
+          "totalMs": 1241.0999999046326,
+          "minMs": 1241.0999999046326,
+          "maxMs": 1241.0999999046326
+        },
+        "text_model_error": {
+          "count": 2,
+          "totalMs": 50763.09999990463,
+          "minMs": 2768.899999856949,
+          "maxMs": 47994.200000047684
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 62257.09999990463,
+          "minMs": 62257.09999990463,
+          "maxMs": 62257.09999990463
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 54568.799999952316,
+          "minMs": 54568.799999952316,
+          "maxMs": 54568.799999952316
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 7688.299999952316,
+          "minMs": 7688.299999952316,
+          "maxMs": 7688.299999952316
+        }
+      },
+      "textFailures": 2,
+      "textSuccesses": 0,
+      "textModels": [
+        "deepseek/deepseek-v4.1-flash"
+      ],
+      "terminalStatus": "blocked",
+      "completeEnvelope": true
+    },
+    {
+      "runId": "268a5084-b3ea-40ae-acfc-2b27a6d796ee",
+      "first": "2026-09-19T07:04:35.593Z",
+      "last": "2026-09-19T07:05:24.724Z",
+      "requestSeen": true,
+      "metrics": {
+        "jev_decision": {
+          "count": 11,
+          "totalMs": 10634.400000333786,
+          "minMs": 398.7000000476837,
+          "maxMs": 1649.2999999523163
+        },
+        "text_model_error": {
+          "count": 1,
+          "totalMs": 8118.799999952316,
+          "minMs": 8118.799999952316,
+          "maxMs": 8118.799999952316
+        },
+        "text_model_end": {
+          "count": 2,
+          "totalMs": 4261,
+          "minMs": 1267.2000000476837,
+          "maxMs": 2993.7999999523163
+        },
+        "verification_completed_elapsed": {
+          "count": 1,
+          "totalMs": 5561.099999904633,
+          "minMs": 5561.099999904633,
+          "maxMs": 5561.099999904633
+        }
+      },
+      "textFailures": 1,
+      "textSuccesses": 2,
+      "textModels": [
+        "deepseek/deepseek-v4.1-flash"
+      ],
+      "completeEnvelope": false
+    },
+    {
+      "runId": "b54e2627-21fb-4eaa-822a-cbbeac5f94f2",
+      "first": "2026-09-19T07:11:36.140Z",
+      "last": "2026-09-19T07:18:43.896Z",
+      "requestSeen": true,
+      "metrics": {
+        "fx_turn": {
+          "count": 2,
+          "totalMs": 419234,
+          "minMs": 48029.799999952316,
+          "maxMs": 371204.2000000477
+        },
+        "fx_tools": {
+          "count": 2,
+          "totalMs": 337035.80000019073,
+          "minMs": 5824.099999904633,
+          "maxMs": 331211.7000002861
+        },
+        "fx_outside_tools": {
+          "count": 2,
+          "totalMs": 82198.19999980927,
+          "minMs": 39992.49999976158,
+          "maxMs": 42205.700000047684
+        },
+        "verification_completed_elapsed": {
+          "count": 2,
+          "totalMs": 315222.4999997616,
+          "minMs": 8219.799999952316,
+          "maxMs": 307002.69999980927
+        },
+        "jev_decision": {
+          "count": 8,
+          "totalMs": 4963.400000572205,
+          "minMs": 336.40000009536743,
+          "maxMs": 745.4000000953674
+        },
+        "verification_error_elapsed": {
+          "count": 1,
+          "totalMs": 299263,
+          "minMs": 299263,
+          "maxMs": 299263
+        }
+      },
+      "textFailures": 0,
+      "textSuccesses": 0,
+      "textModels": [],
+      "completeEnvelope": false
+    },
+    {
+      "runId": "d3e688ea-d0f7-4b69-b452-19cde86fb512",
+      "first": "2026-09-19T07:21:10.563Z",
+      "last": "2026-09-19T07:21:30.108Z",
+      "requestSeen": true,
+      "metrics": {
+        "jev_decision": {
+          "count": 2,
+          "totalMs": 2154.5999999046326,
+          "minMs": 793,
+          "maxMs": 1361.5999999046326
+        },
+        "text_model_error": {
+          "count": 4,
+          "totalMs": 2830.600000143051,
+          "minMs": 490.5,
+          "maxMs": 1019.9000000953674
+        },
+        "fx_turn": {
+          "count": 1,
+          "totalMs": 19485.10000014305,
+          "minMs": 19485.10000014305,
+          "maxMs": 19485.10000014305
+        },
+        "fx_tools": {
+          "count": 1,
+          "totalMs": 6871.200000047684,
+          "minMs": 6871.200000047684,
+          "maxMs": 6871.200000047684
+        },
+        "fx_outside_tools": {
+          "count": 1,
+          "totalMs": 12613.900000095367,
+          "minMs": 12613.900000095367,
+          "maxMs": 12613.900000095367
+        }
+      },
+      "textFailures": 4,
+      "textSuccesses": 0,
+      "textModels": [
+        "inception/mercury-2.5"
+      ],
+      "terminalStatus": "blocked",
+      "completeEnvelope": true
+    }
+  ]
+}

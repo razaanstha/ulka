@@ -52,10 +52,14 @@ test('panel scopes live usage to request, saves final totals, restores history, 
     expect(window.document.querySelector('.usage-summary')!.textContent).toContain('135 tokens');
     expect(window.document.querySelector('.usage-summary')!.textContent).not.toContain('Updating');
     expect(stored.ulkaChats[0].messages[1].usage.inputTokens).toBe(120);
+    expect(stored.ulkaChats[0].messages[1].elapsedMs).toBeGreaterThanOrEqual(0);
+    const completedUsage = window.document.querySelector('.usage-summary')!.textContent;
+    expect(completedUsage).toMatch(/ · \d+s/);
     window.document.querySelector<HTMLButtonElement>('[aria-label="New chat"]')!.click();
     window.document.querySelector<HTMLButtonElement>('#history-toggle')!.click();
     window.document.querySelector<HTMLButtonElement>('.history-entry')!.click();
     expect(window.document.querySelector('.usage-summary')!.textContent).toContain('135 tokens');
+    expect(window.document.querySelector('.usage-summary')!.textContent).toBe(completedUsage);
     prompt.value = 'Continue'; window.document.querySelector<HTMLButtonElement>('#send')!.click();
     expect(request.messages[1]).toEqual({ role: 'assistant', content: 'Page summary' });
     listener({ type: 'FX_PROGRESS', text: 'Useful partial finding' });

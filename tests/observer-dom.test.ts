@@ -317,3 +317,30 @@ test('observer preserves long drafts and explicitly marks oversized field values
     expect(oversized.valueTruncated).toBe(true);
   }
 });
+
+
+test('visible busy regions prevent readiness; hidden indicators do not', () => {
+  const window = page();
+  window.document.body.innerHTML = '<div aria-busy="true">Fetching data</div><button>Open</button>';
+  expect(window.eval(OBSERVER_EXPRESSION).diagnostics.busy).toBe(true);
+  window.document.querySelector('[aria-busy]')!.setAttribute('style', 'display:none');
+  expect(window.eval(OBSERVER_EXPRESSION).diagnostics.busy).toBe(false);
+  window.document.body.innerHTML = '<div role="progressbar" aria-label="Working"></div>';
+  expect(window.eval(OBSERVER_EXPRESSION).diagnostics.busy).toBe(true);
+});
+
+test('dense pages retain every reachable control beyond the old 250-row cap', () => {
+  const window = page();
+  window.document.body.innerHTML = Array.from({ length: 300 }, (_, i) => `<button aria-label="Action ${i + 1}">${i + 1}</button>`).join('');
+  const buttons = [...window.document.querySelectorAll('button')];
+  for (const [index, button] of buttons.entries()) {
+    const x = (index % 25) * 25, y = Math.floor(index / 25) * 25;
+    Object.defineProperty(button, 'getBoundingClientRect', { value: () => ({ x, y, left: x, top: y, right: x + 24, bottom: y + 24, width: 24, height: 24 }) });
+  }
+  Object.defineProperty(window.document, 'elementFromPoint', { configurable: true, value: (x: number, y: number) => buttons[Math.floor(y / 25) * 25 + Math.floor(x / 25)] ?? null });
+  const snapshot = window.eval(OBSERVER_EXPRESSION);
+  expect(snapshot.elements).toHaveLength(300);
+  const last = snapshot.elements.find((e: any) => e.label === 'Action 300');
+  expect(last.operations).toContain('CLICK');
+  expect(snapshot.guards[last.id]).toBeDefined();
+});

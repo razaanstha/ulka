@@ -1,4 +1,4 @@
-import { TextTargetMismatchError, textGenerationContext } from './text-generator';
+import { TextGenerationUnavailableError, TextTargetMismatchError, textGenerationContext } from './text-generator';
 import { VerificationUnavailableError } from './outcome-verifier';
 import type { ActionRecord, AgentDecision, PageSnapshot } from "../../../../packages/protocol/src/index";
 import { classifyAction } from "./approvals";
@@ -14,8 +14,11 @@ export interface TextEngine { generate(goal: string, field: PageSnapshot["elemen
 export interface VerificationEngine { verify(goal: string, page: PageSnapshot, history: ActionRecord[]): Promise<{ satisfied: boolean; evidence: string }> }
 export interface TraceEvent { type: "observe" | "decision" | "text" | "execute" | "verify" | "stale" | "scroll_progress" | "action_progress"; step: number; detail: Record<string, unknown> }
 export interface RunnerOptions {
+  // Only FX may defer routine subgoal verification to its final task check.
+  completionMode?: 'task' | 'subgoal';
   cancelRequests?: () => void;
   taskMemory?: TaskMemory;
+  taskBudget?: TaskBudget;
   maxActions?: number;
   maxModelCalls?: number;
   initialDecision?: AgentDecision;
@@ -27,8 +30,11 @@ export interface TaskMemory {
   attempts: Map<string, number>;
   stateVisits?: Map<string, number>;
   actionCache?: Map<string, CachedAction>;
+  budget?: TaskBudget;
 }
-export interface AgentResult { status: "done" | "blocked" | "stopped"; reason?: string; failure?: 'verification_unavailable'; history: ActionRecord[] }
+// Shared across serial FX subgoals. A model step may include provider retries.
+export interface TaskBudget { remainingActions: number; remainingModelSteps: number }
+export interface AgentResult { status: "done" | "checkpoint" | "blocked" | "stopped"; reason?: string; failure?: 'verification_unavailable' | 'text_generation_unavailable' | 'task_budget_exhausted'; history: ActionRecord[] }
 
 export class AgentRunner {
   readonly history: ActionRecord[] = [];
@@ -48,10 +54,18 @@ export class AgentRunner {
   async run(goal: string): Promise<AgentResult> {
     const maxActions = this.options.maxActions ?? 30, maxModelCalls = this.options.maxModelCalls ?? 60;
     let calls = 0;
+    const budget = this.options.taskBudget;
+    const claimModelStep = (): AgentResult | undefined => {
+      if (budget && budget.remainingModelSteps <= 0) return this.budgetExhausted('model-step');
+      if (calls >= maxModelCalls) return this.blocked('Agent model-call limit reached.');
+      calls++;
+      if (budget) budget.remainingModelSteps--;
+    };
     let nextSnapshot: PageSnapshot | undefined;
     let generatedTextCache: { key: string; text: string } | undefined;
     let staleAttempts = 0;
     let failedVerifications = 0;
+    let requiresSubgoalVerification = false;
     let feedback: { evidence: string; excludeDone: boolean } | undefined;
     let scrollStreak = 0, emptyScrolls = 0;
     const seenContent = new Set<string>();
@@ -60,7 +74,9 @@ export class AgentRunner {
     const stateVisits = memory.stateVisits ??= new Map<string, number>();
     try {
       while (!this.stopped) {
-        if (this.history.length >= maxActions || calls >= maxModelCalls) return this.blocked("Agent step limit reached.");
+        if (!budget && this.history.length >= maxActions) return this.blocked("Agent step limit reached.");
+        const modelLimit = claimModelStep();
+        if (modelLimit) return modelLimit;
         this.states.transition("OBSERVING");
         // Consume the settled observation once; stale retries and failed verification re-observe.
         const snapshot = nextSnapshot ?? await this.observer.observe();
@@ -77,9 +93,14 @@ export class AgentRunner {
         if (this.stopped) return this.stoppedResult();
         this.trace("decision", { operation: decision.operation, target: decision.target, confidence: decision.confidence, probabilities: decision.operationProbabilities, latencyMs: decision.latencyMs, cacheHit: Boolean(cached), observedAction: Boolean(forced) });
         if (decision.operation === "DONE") {
+          if (this.options.completionMode === 'subgoal' && !requiresSubgoalVerification) {
+            this.states.transition('CHECKPOINT');
+            return { status: 'checkpoint', reason: 'Jev ended this subgoal; its outcome remains unverified. Inspect the returned observation before dependent actions. Final task verification is still required.', history: this.history };
+          }
           if (!this.verifier) return this.blocked("Goal verifier unavailable.");
-          if (calls >= maxModelCalls) return this.blocked("Agent model-call limit reached.");
-          calls++;
+          const verificationLimit = claimModelStep();
+          if (verificationLimit) return verificationLimit;
+          this.states.transition("VERIFYING");
           const verification = await this.verifier.verify(goal, snapshot, this.history);
           if (this.stopped) return this.stoppedResult();
           this.trace("verify", verification);
@@ -91,6 +112,9 @@ export class AgentRunner {
           this.states.transition("DONE"); return { status: "done", history: this.history };
         }
         if (decision.operation === "BLOCKED") return this.blocked("Jev found no supported action.");
+        // At the action budget, allow DONE above but never another mutation or text call.
+        if (budget && budget.remainingActions <= 0) return this.budgetExhausted('action');
+        if (this.history.length >= maxActions) return this.blocked('Agent step limit reached.');
         const exhaustedWait = () => memory.history.slice(-2).length === 2 && memory.history.slice(-2).every(action => action.url === snapshot.url && action.operation === 'WAIT' && action.pageChanged === false);
         if (decision.operation === 'WAIT' && exhaustedWait()) return this.blocked('Wait checkpoint: two waits produced no observed change. Read the current page and choose a non-WAIT action, or report a loading/access blocker. Do not repeat waiting or navigate merely to reset retries.');
         const recentScrolls = memory.history.slice(-3);
@@ -118,8 +142,9 @@ export class AgentRunner {
           const key = textGenerationContextKey(goal, target, snapshot, this.history);
           if (generatedTextCache?.key === key) text = generatedTextCache.text;
           else {
-            if (calls >= maxModelCalls) return this.blocked("Agent model-call limit reached.");
-            calls++; this.states.transition("GENERATING_TEXT");
+            const textLimit = claimModelStep();
+            if (textLimit) return textLimit;
+            this.states.transition("GENERATING_TEXT");
             try {
               text = await this.textEngine.generate(goal, target, snapshot, this.history);
             } catch (error) {
@@ -139,7 +164,10 @@ export class AgentRunner {
         this.states.transition("VALIDATING");
         try {
           this.states.transition("EXECUTING");
+          // Count attempts too: an executor can change focus before reporting a stale target.
+          if (budget) budget.remainingActions--;
           await this.executor.execute(snapshot, decision, text);
+          if (risk === "confirm") requiresSubgoalVerification = true;
           this.trace("execute", { operation: decision.operation, target: decision.target, snapshotId: snapshot.snapshotId, nodeId: target?.nodeId, role: target?.role });
         } catch (error) {
           if (error instanceof StaleDecisionError) {
@@ -164,13 +192,26 @@ export class AgentRunner {
         staleAttempts = 0;
         generatedTextCache = undefined;
         this.states.transition("OBSERVING");
+        const visiblyIdle = (page: PageSnapshot) => page.diagnostics?.busy === false &&
+          !page.text.split('\n').some(line => /^(?:loading|fetching|searching|please wait)(?:\b|[\s.…!])/i.test(line.trim()) && line.trim().length < 100);
+        const idleSubgoalWait = decision.operation === 'WAIT' && this.options.completionMode === 'subgoal' && visiblyIdle(snapshot);
         const after = this.observer.waitForChange
-          ? await this.observer.waitForChange(snapshot, () => this.stopped, decision.operation === "WAIT" ? 10000 : 3000)
+          ? await this.observer.waitForChange(snapshot, () => this.stopped, decision.operation === "WAIT" && !idleSubgoalWait ? 10000 : 3000)
           : await this.observer.observe();
         if (this.stopped) return this.stoppedResult();
         nextSnapshot = after;
         record.pageChanged = progressState(after) !== progressState(snapshot);
         this.trace("action_progress", { operation: decision.operation, target: decision.target, pageChanged: record.pageChanged, rawPageChanged: after.fingerprint !== snapshot.fingerprint });
+        if (this.options.completionMode === 'subgoal' && after.url !== snapshot.url) {
+          // A new document/search is a planning boundary, not proof of success.
+          // Do not let the old interaction goal keep mutating the resulting page.
+          this.states.transition('CHECKPOINT');
+          return { status: 'checkpoint', reason: 'The page URL changed. Outcome remains unverified. Inspect the new page before continuing; do not repeat already committed controls. Final task verification is still required.', history: this.history };
+        }
+        if (idleSubgoalWait && !record.pageChanged && visiblyIdle(after)) {
+          this.states.transition('CHECKPOINT');
+          return { status: 'checkpoint', reason: 'Wait produced no change on a page without observed loading. Outcome remains unverified. Inspect this observation with the planner before any further wait; final task verification is still required.', history: this.history };
+        }
         if (decision.operation.startsWith('SCROLL_')) {
           const chunks = (text: string) => text.split(/\n+/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean);
           for (const line of chunks(snapshot.text)) seenContent.add(line);
@@ -195,6 +236,7 @@ export class AgentRunner {
       return this.stoppedResult();
     } catch (error) {
       if (this.stopped) return this.stoppedResult();
+      if (error instanceof TextGenerationUnavailableError) return { ...this.blocked(error.message), failure: 'text_generation_unavailable' };
       if (error instanceof VerificationUnavailableError) return { ...this.blocked(error.message), failure: 'verification_unavailable' };
       this.states.transition("ERROR");
       throw error;
@@ -204,6 +246,10 @@ export class AgentRunner {
   private blocked(reason: string): AgentResult {
     this.states.transition("BLOCKED");
     return { status: "blocked", reason, history: this.history };
+  }
+
+  private budgetExhausted(kind: string): AgentResult {
+    return { ...this.blocked(`Task ${kind} budget exhausted. Review partial progress before continuing.`), failure: 'task_budget_exhausted' };
   }
 
   private stoppedResult(): AgentResult {

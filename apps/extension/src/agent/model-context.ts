@@ -5,7 +5,7 @@ export function modelElement({ nodeId: _nodeId, ...element }: PageElement) {
   return element;
 }
 export function modelPage(page: PageSnapshot) {
-  return { url: page.url, title: page.title, text: page.text, elements: page.elements.map(modelElement) };
+  return { url: page.url, title: page.title, text: page.text, elements: page.elements.map(modelElement), ...(page.diagnostics?.omittedOffscreenControls ? { omittedOffscreenControls: page.diagnostics.omittedOffscreenControls } : {}) };
 }
 export function modelHistory(history: ActionRecord[], limit = 10) {
   return history.slice(-limit).map(({ operation, targetLabel, text, pageChanged, url }) => ({

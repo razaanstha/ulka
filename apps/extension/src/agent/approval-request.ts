@@ -30,10 +30,12 @@ export function formatApprovalRequest(request: ApprovalRequest): string {
 export class ApprovalGate {
   private pending?: { id: string; resolve: (approved: boolean) => void };
 
-  request(id: string, publish: () => Promise<unknown>, timeoutMs = 30_000): Promise<boolean> {
+  request(id: string, publish: () => Promise<unknown>, timeoutMs?: number): Promise<boolean> {
     this.cancel();
     return new Promise(resolve => {
-      const timer = setTimeout(() => this.respond(id, false), timeoutMs);
+      // Human approval has no default deadline. Cancellation/replacement still
+      // fails closed; an explicit caller deadline may only deny, never approve.
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => this.respond(id, false), timeoutMs);
       this.pending = { id, resolve: approved => { clearTimeout(timer); resolve(approved); } };
       void Promise.resolve().then(() => {
         if (this.pending?.id === id) return publish();

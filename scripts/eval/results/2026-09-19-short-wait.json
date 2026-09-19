@@ -1,0 +1,162 @@
+{
+  "scope": "scripted runtime fixtures, no model calls",
+  "checks": [
+    {
+      "family": "context-click",
+      "seed": 0,
+      "success": true,
+      "action_ms": 772.1
+    },
+    {
+      "family": "form-fill",
+      "seed": 0,
+      "success": true,
+      "action_ms": 980.0
+    },
+    {
+      "family": "select",
+      "seed": 0,
+      "success": true,
+      "action_ms": 768.2
+    },
+    {
+      "family": "checkbox",
+      "seed": 0,
+      "success": true,
+      "action_ms": 772.8
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 0,
+      "success": true,
+      "action_ms": 2011.7
+    },
+    {
+      "family": "context-click",
+      "seed": 1,
+      "success": true,
+      "action_ms": 777.3
+    },
+    {
+      "family": "form-fill",
+      "seed": 1,
+      "success": true,
+      "action_ms": 977.6
+    },
+    {
+      "family": "select",
+      "seed": 1,
+      "success": true,
+      "action_ms": 771.4
+    },
+    {
+      "family": "checkbox",
+      "seed": 1,
+      "success": true,
+      "action_ms": 770.1
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 1,
+      "success": true,
+      "action_ms": 2478.8
+    },
+    {
+      "family": "context-click",
+      "seed": 2,
+      "success": true,
+      "action_ms": 771.9
+    },
+    {
+      "family": "form-fill",
+      "seed": 2,
+      "success": true,
+      "action_ms": 973.0
+    },
+    {
+      "family": "select",
+      "seed": 2,
+      "success": true,
+      "action_ms": 765.0
+    },
+    {
+      "family": "checkbox",
+      "seed": 2,
+      "success": true,
+      "action_ms": 761.6
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 2,
+      "success": true,
+      "action_ms": 2477.0
+    },
+    {
+      "family": "context-click",
+      "seed": 3,
+      "success": true,
+      "action_ms": 765.5
+    },
+    {
+      "family": "form-fill",
+      "seed": 3,
+      "success": true,
+      "action_ms": 970.4
+    },
+    {
+      "family": "select",
+      "seed": 3,
+      "success": true,
+      "action_ms": 765.2
+    },
+    {
+      "family": "checkbox",
+      "seed": 3,
+      "success": true,
+      "action_ms": 769.1
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 3,
+      "success": false,
+      "reason": "Editor absent after initial action wait",
+      "action_ms": 1505.6
+    },
+    {
+      "family": "context-click",
+      "seed": 17,
+      "success": true,
+      "action_ms": 771.6
+    },
+    {
+      "family": "form-fill",
+      "seed": 17,
+      "success": true,
+      "action_ms": 974.5
+    },
+    {
+      "family": "select",
+      "seed": 17,
+      "success": true,
+      "action_ms": 764.4
+    },
+    {
+      "family": "checkbox",
+      "seed": 17,
+      "success": true,
+      "action_ms": 768.3
+    },
+    {
+      "family": "delayed-editor",
+      "seed": 17,
+      "success": true,
+      "action_ms": 2485.0
+    }
+  ],
+  "latency_ms": {
+    "p50": 772.1,
+    "p95": 2478.8
+  },
+  "wrong_action_success": 0,
+  "false_completion_success": 0
+}

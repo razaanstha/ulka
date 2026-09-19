@@ -282,6 +282,47 @@ test('explicit WAIT uses longer observation budget and stop interrupts polling',
   expect(budget).toBe(10000);
 });
 
+test('unchanged non-loading subgoal wait returns an unverified checkpoint for planner inspection', async () => {
+  const page = { ...makeSnapshot('ready'), diagnostics: { busy: false, modalScoped: false, candidates: 1, rejected: {}, iframeCount: 0 } };
+  let decisions = 0, budget = 0;
+  const runner = new AgentRunner({ observe: async () => page,
+    waitForChange: async (_before: PageSnapshot, _stopped: () => boolean, ms: number) => { budget = ms; return page; },
+  } as never, { decide: async () => { decisions++; return { operation: 'WAIT', confidence: 1 }; } },
+  { execute: async () => {} } as never, undefined, { completionMode: 'subgoal' });
+  const result = await runner.run('Commit date and wait for results');
+  expect(result.status).toBe('checkpoint');
+  expect(result.reason).toContain('unverified');
+  expect(decisions).toBe(1);
+  expect(budget).toBe(3000);
+});
+
+test('subgoal navigation returns fresh evidence before another action or completion claim', async () => {
+  const before = makeSnapshot('before');
+  const after = { ...before, url: before.url + '?return=2026-10-10', fingerprint: 'after' };
+  let decisions = 0, executions = 0, verified = false;
+  const runner = new AgentRunner({ observe: async () => before, waitForChange: async () => after } as never,
+    { decide: async () => { decisions++; return { operation: 'CLICK', target: 'e1', confidence: 1 }; } },
+    { execute: async () => { executions++; } } as never, undefined, { completionMode: 'subgoal' }, undefined,
+    { verify: async () => { verified = true; return { satisfied: true, evidence: 'unused' }; } });
+  const result = await runner.run('Change return date');
+  expect(result.status).toBe('checkpoint');
+  expect(result.reason).toContain('unverified');
+  expect(decisions).toBe(1); expect(executions).toBe(1); expect(verified).toBe(false);
+});
+
+test('visible loading keeps the long wait even when aria-busy is false', async () => {
+  for (const text of ['Fetching results', 'Loading…', 'Searching flights']) {
+    const page = { ...makeSnapshot('loading'), text, diagnostics: { busy: false, modalScoped: false, candidates: 1, rejected: {}, iframeCount: 0 } };
+    let budget = 0;
+    const runner = new AgentRunner({ observe: async () => page,
+      waitForChange: async (_before: PageSnapshot, _stopped: () => boolean, ms: number) => { budget = ms; runner.stop(); return page; },
+    } as never, { decide: async () => ({ operation: 'WAIT', confidence: 1 }) },
+    { execute: async () => {} } as never, undefined, { completionMode: 'subgoal' });
+    expect((await runner.run('Wait for results')).status).toBe('stopped');
+    expect(budget).toBe(10000);
+  }
+});
+
 test('unrelated text and changing element positions cannot reset control retry budget', async () => {
   let actions = 0;
   const observe = async () => {
@@ -330,4 +371,83 @@ test('page-state cycles remain bounded across separate subgoals', async () => {
   }
   expect(last.reason).toContain('page-state cycle');
   expect(actions).toBeLessThanOrEqual(6);
+});
+
+test('completion verification has its own visible state instead of deciding', async () => {
+  const { AgentStateMachine } = await import('../apps/extension/src/agent/state-machine');
+  const states = new AgentStateMachine();
+  const runner = new AgentRunner({ observe: async () => makeSnapshot('done') } as never,
+    { decide: async () => ({ operation: 'DONE', confidence: 1 }) }, {} as never, states, {}, undefined,
+    { verify: async () => {
+      expect(states.state as string).toBe('VERIFYING');
+      return { satisfied: true, evidence: 'Observed' };
+    } });
+  expect((await runner.run('Read page')).status).toBe('done');
+});
+
+test('routine subgoal completion returns an unverified checkpoint without a model check', async () => {
+  let checks = 0;
+  const runner = new AgentRunner({ observe: async () => makeSnapshot('ready') } as never,
+    { decide: async () => ({ operation: 'DONE', confidence: 1 }) }, {} as never, undefined,
+    { completionMode: 'subgoal' }, undefined,
+    { verify: async () => { checks++; return { satisfied: true, evidence: 'Must not run' }; } });
+  const result = await runner.run('Open the menu');
+  expect(result.status).toBe('checkpoint');
+  expect(result.reason).toContain('unverified');
+  expect(checks).toBe(0);
+  expect(runner.states.state).toBe('CHECKPOINT');
+});
+
+test('subgoal mode keeps approval and completion verification for consequential actions', async () => {
+  let actions = 0, approvals = 0, checks = 0;
+  const page = makeSnapshot('send');
+  page.elements[0].label = 'Send';
+  const runner = new AgentRunner({ observe: async () => page } as never,
+    { decide: async () => actions ? { operation: 'DONE', confidence: 1 } : { operation: 'CLICK', target: 'e1', confidence: 1 } },
+    { execute: async () => { actions++; } } as never, undefined,
+    { completionMode: 'subgoal', approve: async () => { approvals++; return true; } }, undefined,
+    { verify: async () => { checks++; return { satisfied: true, evidence: 'Sent confirmation' }; } });
+  expect((await runner.run('Send the approved message')).status).toBe('done');
+  expect([actions, approvals, checks]).toEqual([1, 1, 1]);
+});
+
+test('a coherent subgoal can perform twelve actions without a planner handoff', async () => {
+  let actions = 0;
+  const observe = async () => {
+    const page = makeSnapshot(String(actions));
+    page.elements[0].value = String(actions);
+    return page;
+  };
+  const runner = new AgentRunner({ observe } as never,
+    { decide: async () => actions < 12 ? { operation: 'CLICK', target: 'e1', confidence: 1 } : { operation: 'DONE', confidence: 1 } },
+    { execute: async () => { actions++; } } as never, undefined,
+    { completionMode: 'subgoal', taskBudget: { remainingActions: 30, remainingModelSteps: 60 } });
+  expect((await runner.run('Increment to twelve')).status).toBe('checkpoint');
+  expect(actions).toBe(12);
+});
+
+test('task action budget survives handoffs and permits DONE at the exact budget', async () => {
+  const taskBudget = { remainingActions: 3, remainingModelSteps: 20 };
+  let actions = 0;
+  const makeRunner = (target: number) => new AgentRunner({ observe: async () => {
+    const page = makeSnapshot(String(actions)); page.elements[0].value = String(actions); return page;
+  } } as never,
+  { decide: async () => actions < target ? { operation: 'CLICK', target: 'e1', confidence: 1 } : { operation: 'DONE', confidence: 1 } },
+  { execute: async () => { actions++; } } as never, undefined, { completionMode: 'subgoal', taskBudget });
+  expect((await makeRunner(2).run('First part')).status).toBe('checkpoint');
+  expect((await makeRunner(3).run('Second part')).status).toBe('checkpoint');
+  expect(await makeRunner(4).run('Another part')).toMatchObject({ status: 'blocked', failure: 'task_budget_exhausted' });
+  expect(actions).toBe(3);
+});
+
+test('task model-step budget survives handoffs even when no action executes', async () => {
+  const taskBudget = { remainingActions: 30, remainingModelSteps: 2 };
+  let decisions = 0;
+  const makeRunner = () => new AgentRunner({ observe: async () => makeSnapshot('ready') } as never,
+    { decide: async () => { decisions++; return { operation: 'DONE', confidence: 1 }; } }, {} as never,
+    undefined, { completionMode: 'subgoal', taskBudget });
+  expect((await makeRunner().run('First')).status).toBe('checkpoint');
+  expect((await makeRunner().run('Second')).status).toBe('checkpoint');
+  expect(await makeRunner().run('Third')).toMatchObject({ status: 'blocked', failure: 'task_budget_exhausted' });
+  expect(decisions).toBe(2);
 });
