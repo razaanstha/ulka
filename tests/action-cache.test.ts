@@ -36,4 +36,13 @@ describe("action cache", () => {
     const changed = { ...page("Continue now"), elements: [{ ...page("Continue now").elements[0], id: "e99", nodeId: 99 }], guards: { e99: { ...page("Continue now").guards.e1, nodeId: 99 } } };
     expect(findCachedAction(cache, "Continue", changed)).toBeUndefined();
   });
+
+  test('does not replay a link whose destination changed under the same label', () => {
+    const cache = new Map<string, CachedAction>();
+    const current = page();
+    current.elements[0].href = 'https://example.test/first';
+    rememberAction(cache, 'Open link', current, { operation: 'CLICK', target: 'e1', confidence: 1 }, { step: 1, operation: 'CLICK', target: 'e1', url: current.url, pageChanged: true, executedAt: 1 });
+    const changed = { ...current, elements: [{ ...current.elements[0], href: 'https://example.test/second' }] };
+    expect(findCachedAction(cache, 'Open link', changed)).toBeUndefined();
+  });
 });

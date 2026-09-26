@@ -60,6 +60,23 @@ test('approved field content is returned unchanged after independent review', as
   expect(requests.every(request => request.reasoning === 'none' && request.model.modelId === 'deepseek/deepseek-v4.1-flash' && request.maxRetries === 0)).toBe(true);
 });
 
+test('field writer sees personalization without weakening content review', async () => {
+  const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
+  const requests: any[] = [];
+  const request = async (input: any) => {
+    requests.push(input);
+    return { output: requests.length === 1
+      ? { suitable: true, reason: 'Message editor', text: 'Hello, Raju.' }
+      : { approved: true, reason: 'Recipient-facing text' } };
+  };
+  const writer = new TextGenerator('test', undefined, undefined, request, undefined, undefined, 'Use a friendly tone.');
+  expect(await writer.generate('Draft a greeting to Raju', page.elements[1], page, [])).toBe('Hello, Raju.');
+  expect(requests[0].system).toContain('Use a friendly tone.');
+  expect(requests[1].system).toContain('Review a proposed browser field value before it is typed.');
+  expect(requests[1].system).not.toContain('Use a friendly tone.');
+  expect(JSON.parse(requests[1].prompt).personalization).toBe('Use a friendly tone.');
+});
+
 test('text generation and review expose separate costs without logging candidates', async () => {
   const { TextGenerator } = await import('../apps/extension/src/agent/text-generator');
   const events: any[] = []; let calls = 0;

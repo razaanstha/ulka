@@ -8,15 +8,15 @@ import { createTaskObserver } from "./agent/task-observer";
 import { AttachedBrowser, TaskBrowserSession } from "./agent/browser";
 import { VercelJevDecisionEngine } from "./agent/vercel-jev";
 import { AgentStateMachine } from "./agent/state-machine";
-import { ConversationPlanner, type ConversationMessage } from "./agent/conversation";
+import type { ConversationMessage } from "./agent/conversation-message";
 import { TextGenerator } from "./agent/text-generator";
 import { OutcomeVerifier } from "./agent/outcome-verifier";
-import { PageAnswerer } from "./agent/page-answerer";
 import { chromeApi } from "./chrome";
 import { beginLog, log } from "./diagnostics";
 import { reuseOpenTab, waitForNavigation, validateNavigationUrl, internalPageSnapshot } from "./agent/navigation";
 import { LANGUAGE_MODEL } from "./agent/models";
 import { runFxBrowser } from "./agent/fx-agent";
+import { normalizePersonalization } from './agent/personalization';
 import { NativeTabs } from './agent/native-tabs';
 import { listDownloads } from './agent/downloads';
 import { readPageExpression } from './agent/read-page';
@@ -24,7 +24,7 @@ import { evaluate } from './agent/cdp';
 import { WebMcpBridge } from './agent/webmcp';
 import { PageExtractor, type ExtractRequest } from './agent/page-extractor';
 import { buildActionSpace } from './agent/action-space';
-import { observeActions, decisionFromObservedAction, type ObservedAction } from './agent/observed-actions';
+import { observeActions, decisionFromObservedAction, resolveObservedAction, type ObservedAction, type ObservedActionReference } from './agent/observed-actions';
 import type { AgentDecision, PageSnapshot } from "../../../packages/protocol/src";
 
 let activeRunner: AgentRunner | undefined;
@@ -52,7 +52,7 @@ chromeApi.downloads.onChanged.addListener((delta) => {
 });
 
 chromeApi.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
-  const message = raw as { type?: string; requestId?: string; goal?: string; messages?: ConversationMessage[]; approved?: boolean; approvalId?: string; questionId?: string; answer?: unknown };
+  const message = raw as { type?: string; requestId?: string; messages?: ConversationMessage[]; approved?: boolean; approvalId?: string; questionId?: string; answer?: unknown };
   if (message.type === 'GET_USER_QUESTION') { sendResponse({ question: userQuestions.current }); return; }
   if (message.type === 'USER_ANSWER') { sendResponse({ ok: userQuestions.respond(message.questionId, message.answer) }); return; }
   if (message.type === "APPROVAL_RESPONSE") { sendResponse({ ok: approvalGate.respond(message.approvalId, message.approved === true) }); return; }
@@ -73,7 +73,7 @@ chromeApi.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
       .finally(() => { busy = false; });
     return true;
   }
-  if (message.type !== "CHAT" && message.type !== "START") return;
+  if (message.type !== "CHAT") return;
   if (busy) { sendResponse({ ok: false, error: "A task is already running. Stop it before starting another." }); return; }
   busy = true;
   beginLog(message.type);
@@ -82,7 +82,7 @@ chromeApi.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
   const ledger = usageLedger;
   const pricing = loadModelPrices().then(prices => { ledger.setPrices(prices); if (usageLedger === ledger) publishUsage(); });
   const controller = new AbortController(); activeTask = controller;
-  const task = message.type === "CHAT" ? chat(message.messages ?? [], controller.signal) : run(message.goal ?? "", undefined, undefined, controller.signal, undefined, undefined, message.goal);
+  const task = chat(message.messages ?? [], controller.signal);
   void task
     .then(async (result) => { await pricing; await log("result", result); sendResponse({ ok: true, result, usage: ledger.summary() }); })
     .catch(async (error) => { await pricing; await log("error", error); void chromeApi.runtime.sendMessage({ type: "STATE", state: "ERROR" }).catch(() => {}); sendResponse({ ok: false, error: error instanceof Error ? error.message : "Agent failed", usage: ledger.summary() }); })
@@ -91,43 +91,20 @@ chromeApi.runtime.onMessage.addListener((raw, _sender, sendResponse) => {
 });
 
 async function chat(messages: ConversationMessage[], signal: AbortSignal) {
-  const stored = await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaEngine", "ulkaBackground"]);
+  const stored = await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaBackground", "ulkaPersonalization"]);
   const apiKey = stored.vercelAiGatewayApiKey;
   if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("Save Vercel AI Gateway API key first");
+  const personalization = normalizePersonalization(stored.ulkaPersonalization);
   const background = stored.ulkaBackground === true;
   const [taskTab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
   signal.throwIfAborted();
-  if (stored.ulkaEngine !== "classic") return fxChat(messages, apiKey, taskTab?.id, background);
-  void log("planner_start", { model: LANGUAGE_MODEL });
-  const intent = await new ConversationPlanner(apiKey, undefined, reportUsage).interpret(messages, signal);
-  void log("planner_result", intent);
-  if (intent.shouldReadPage) {
-    const page = await observeTaskPage(taskTab?.id);
-    const answer = await new PageAnswerer(apiKey, undefined, reportUsage).answer(messages, page, signal);
-    return { reply: answer.answer, evidence: answer.evidence };
-  }
-  if (!intent.shouldAct) return { reply: intent.reply };
-  if (intent.navigationUrl) {
-    const url = validateNavigationUrl(intent.navigationUrl);
-    if (!taskTab?.id) throw new Error("No active tab");
-    void log("navigation_start", { url, tabId: taskTab.id });
-    signal.throwIfAborted();
-    await chromeApi.tabs.update(taskTab.id, { url });
-    await waitForNavigation(taskTab.id, () => chromeApi.tabs.query({}), undefined, signal);
-    void log("navigation_ready", { tabId: taskTab.id, continueTask: true });
-  }
-  const result = await run(intent.goal, apiKey, taskTab?.id, signal, undefined, background, messages.filter(m => m.role === "user").at(-1)?.content);
-  const outcome = result.status === "done"
-    ? "Done."
-    : result.status === "stopped"
-      ? "Stopped."
-      : `I couldn't complete that: ${result.reason ?? "no supported action"}`;
-  return { reply: `${intent.reply} ${outcome}`.trim(), goal: intent.goal, result };
+  return fxChat(messages, apiKey, taskTab?.id, background, personalization);
 }
 
-async function fxChat(messages: ConversationMessage[], apiKey: string, initialTabId?: number, background = false) {
+async function fxChat(messages: ConversationMessage[], apiKey: string, initialTabId?: number, background = false, personalization = '') {
   if (!initialTabId) throw new Error("No active tab");
   let taskTabId = initialTabId;
+  let observedActions: ObservedAction[] = [];
   const taskMemory: TaskMemory = { history: [], attempts: new Map(), budget: { remainingActions: 30, remainingModelSteps: 60 } };
   const controller = new AbortController(); activeFx = controller;
   const session = new TaskBrowserSession(tabId => createAttachedBrowser(tabId, background), controller.signal);
@@ -150,8 +127,9 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
     },
   });
   // Chrome API activity keeps the MV3 worker alive during streamed model responses.
-  const keepAlive = setInterval(() => void chromeApi.storage.local.get("ulkaEngine"), 20_000);
+  const keepAlive = setInterval(() => void chromeApi.storage.local.get("ulkaBackground"), 20_000);
   const observe = async (instruction?: string) => {
+    observedActions = [];
     controller.signal.throwIfAborted();
     await showOverlay(taskTabId);
     const { tabs } = await nativeTabs.list();
@@ -168,6 +146,7 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
       const suggested = actions.find(action => action.operation === decision.operation && action.target === decision.target && action.option === decision.option);
       suggestedActions = suggested ? [suggested] : [];
     }
+    observedActions = actions;
     return { tabId: taskTabId, page, actions, suggestedActions, actionSpace: buildActionSpace(page), tabs, webmcp };
   };
   try {
@@ -228,17 +207,25 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
       extractPage: async (input: ExtractRequest, signal) => {
         controller.signal.throwIfAborted(); signal.throwIfAborted();
         const started = performance.now();
-        const page = await observeTaskPage(taskTabId);
+        const page = await observeTaskPage(taskTabId, session);
         const result = await new PageExtractor(apiKey, undefined, reportUsage).extract(input, page, signal);
         return { status: 'extracted', url: page.url, result, metadata: { actionId: crypto.randomUUID(), cache: { status: 'DISABLED' }, elapsedMs: performance.now() - started } };
       },
-      actAction: async (input: { goal: string; action: ObservedAction }, signal) => {
+      actAction: async (input: { goal: string; action: ObservedActionReference }, signal) => {
         controller.signal.throwIfAborted(); signal.throwIfAborted();
-        const page = await observeTaskPage(taskTabId);
-        if (input.action.snapshotFingerprint !== page.fingerprint) {
-          return { status: 'blocked', reason: 'Observed action is stale. Observe again before replaying it.' };
+        const page = await observeTaskPage(taskTabId, session);
+        const action = resolveObservedAction(input.action, observedActions);
+        if (input.action.snapshotFingerprint !== page.fingerprint || !action) {
+          observedActions = observeActions(page);
+          return {
+            status: 'blocked',
+            reason: input.action.snapshotFingerprint !== page.fingerprint
+              ? 'Observed action is stale. Requested action was not executed. Use the returned observation; use browser_subgoal if controls keep changing.'
+              : 'Action was not in the latest observed catalog. Requested action was not executed. Use a returned action reference or browser_subgoal.',
+            observation: { tabId: taskTabId, page, actions: observedActions },
+          };
         }
-        const result = await run(input.goal, apiKey, taskTabId, signal, taskMemory, background, undefined, "task", session, decisionFromObservedAction(input.action));
+        const result = await runJevSubgoal(input.goal, { apiKey, taskTabId, signal, taskMemory, session, initialDecision: decisionFromObservedAction(action), personalization });
         taskTabId = result.tabId;
         return { ...result, observation: await observe(), metadata: { actionId: input.action.id, replayed: true, snapshotFingerprint: input.action.snapshotFingerprint } };
       },
@@ -259,7 +246,7 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
       },
       act: async (goal, signal) => {
         controller.signal.throwIfAborted(); signal.throwIfAborted();
-        const result = await run(goal, apiKey, taskTabId, signal, taskMemory, background, messages.filter(m => m.role === "user").at(-1)?.content, "subgoal", session);
+        const result = await runJevSubgoal(goal, { apiKey, taskTabId, signal, taskMemory, session, originalRequest: messages.filter(m => m.role === "user").at(-1)?.content, personalization });
         taskTabId = result.tabId;
         return { ...result, observation: await observe() };
       },
@@ -275,7 +262,7 @@ async function fxChat(messages: ConversationMessage[], apiKey: string, initialTa
       },
       progress: text => { void chromeApi.runtime.sendMessage({ type: "FX_PROGRESS", text }).catch(() => {}); },
       reasoning: text => { void chromeApi.runtime.sendMessage({ type: "FX_REASONING", text }).catch(() => {}); },
-    }, controller.signal);
+    }, controller.signal, undefined, personalization);
     void chromeApi.runtime.sendMessage({ type: "STATE", state: result.status.toUpperCase() }).catch(() => {});
     return result;
   } finally {
@@ -315,23 +302,30 @@ function createAttachedBrowser(tabId: number, background: boolean): AttachedBrow
   return browser;
 }
 
-async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, signal?: AbortSignal, taskMemory?: TaskMemory, backgroundMode?: boolean, originalRequest?: string, completionMode: "task" | "subgoal" = "task", session?: TaskBrowserSession, initialDecision?: AgentDecision) {
-  signal?.throwIfAborted();
+interface JevSubgoalOptions {
+  apiKey: string;
+  taskTabId: number;
+  signal: AbortSignal;
+  taskMemory: TaskMemory;
+  session: TaskBrowserSession;
+  originalRequest?: string;
+  initialDecision?: AgentDecision;
+  personalization: string;
+}
+
+async function runJevSubgoal(goal: string, options: JevSubgoalOptions) {
+  const { apiKey, taskTabId, signal, taskMemory, session, originalRequest, initialDecision, personalization } = options;
+  signal.throwIfAborted();
   if (!goal.trim()) throw new Error("Goal required");
-  const stored = suppliedApiKey ? {} : await chromeApi.storage.local.get(["vercelAiGatewayApiKey", "ulkaBackground"]);
-  const background = backgroundMode ?? stored.ulkaBackground === true;
-  const apiKey = suppliedApiKey ?? stored.vercelAiGatewayApiKey;
-  if (typeof apiKey !== "string" || !apiKey.trim()) throw new Error("Save Vercel AI Gateway API key first");
   activeRunner?.stop();
-  const tab = taskTabId ? (await chromeApi.tabs.query({})).find(item => item.id === taskTabId) : (await chromeApi.tabs.query({ active: true, currentWindow: true }))[0];
+  const tab = (await chromeApi.tabs.query({})).find(item => item.id === taskTabId);
   if (!tab?.id) throw new Error("No active tab");
-  const browser = session ? await session.get(tab.id) : createAttachedBrowser(tab.id, background);
+  const browser = await session.get(tab.id);
   const states = new AgentStateMachine((state) => { void log("state", { state }); void chromeApi.runtime.sendMessage({ type: "STATE", state }).catch(() => {}); });
   states.transition("ATTACHING");
-  signal?.throwIfAborted();
-  await browser.attach();
+  signal.throwIfAborted();
   try {
-    signal?.throwIfAborted();
+    signal.throwIfAborted();
     await showOverlay(browser.tabId);
     const observer = createTaskObserver(browser.observer,
       () => chromeApi.tabs.query({ currentWindow: true }),
@@ -340,11 +334,11 @@ async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, si
     const runner = new AgentRunner(observer, new VercelJevDecisionEngine(apiKey, undefined, requests.signal, reportUsage), browser.executor, states, {
       cancelRequests: () => requests.abort(),
       taskMemory,
-      completionMode,
-      taskBudget: taskMemory?.budget,
+      completionMode: "subgoal",
+      taskBudget: taskMemory.budget,
       initialDecision,
-      maxActions: signal ? 8 : 30,
-      maxModelCalls: signal ? 16 : 60,
+      maxActions: 8,
+      maxModelCalls: 16,
       onTrace: (event) => { void log(event.type, event); void chromeApi.runtime.sendMessage({ type: "TRACE", event }).catch(() => {}); },
       approve: async (decision, snapshot, text) => {
         const request = createApprovalRequest(decision, snapshot, text);
@@ -354,15 +348,14 @@ async function run(goal: string, suppliedApiKey?: string, taskTabId?: number, si
           void chromeApi.runtime.sendMessage({ type: 'APPROVAL_CLOSED', approvalId: request.id }).catch(() => {});
         }
       },
-    }, new TextGenerator(apiKey, requests.signal, reportUsage, undefined, (event, data) => { void log(event, data); }, originalRequest), new OutcomeVerifier(apiKey, requests.signal, reportUsage, { log: (event, data) => { void log(event, data); } }));
+    }, new TextGenerator(apiKey, requests.signal, reportUsage, undefined, (event, data) => { void log(event, data); }, originalRequest, personalization), new OutcomeVerifier(apiKey, requests.signal, reportUsage, { log: (event, data) => { void log(event, data); } }));
     activeRunner = runner;
     const stop = () => { runner.stop(); approvalGate.cancel(); };
-    signal?.addEventListener("abort", stop, { once: true });
-    if (signal?.aborted) runner.stop();
+    signal.addEventListener("abort", stop, { once: true });
+    if (signal.aborted) runner.stop();
     try { return { ...await runner.run(goal), tabId: browser.tabId }; }
-    finally { signal?.removeEventListener("abort", stop); }
+    finally { signal.removeEventListener("abort", stop); }
   } finally {
     activeRunner = undefined;
-    if (!session) await browser.detach();
   }
 }

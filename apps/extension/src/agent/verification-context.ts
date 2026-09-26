@@ -65,10 +65,21 @@ export function verificationContext(goal: string, page: PageSnapshot, history: A
   const taskEvidence = evidence.map(item => {
     let result: unknown = item.result;
     try { result = JSON.parse(item.result); } catch { /* Older evidence may be plain text. */ }
-    return { ...item, result };
+    return { ...item, result: withoutExecutionCatalogs(result) };
   });
   return { goal, page: pack(modelPage(page)), recentActions: modelHistory(history), taskEvidence: pack(taskEvidence),
     encoding: 'controlSetRef indexes controlSets; array rows align with columns; null or missing trailing cells mean absent. If a table has baseControlSetRef, each integer row copies that row index from the referenced full table; array rows are the changed/new rows. Row order and removals are represented exactly. contextRef indexes contexts. Tables retain all observed controls and their state; execution operations are omitted. Earlier evidence is chronological and may be superseded by later observations.',
     controlSets, contexts,
   };
+}
+
+// Replay descriptors describe what could be executed, not what happened.
+// All observed controls and state remain available as verification evidence.
+function withoutExecutionCatalogs(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { actions: _actions, suggestedActions: _suggestedActions, ...result } = value as Record<string, unknown>;
+  for (const key of ['observation', 'pageRead']) {
+    if (result[key]) result[key] = withoutExecutionCatalogs(result[key]);
+  }
+  return result;
 }

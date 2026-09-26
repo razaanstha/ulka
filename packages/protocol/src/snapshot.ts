@@ -12,6 +12,7 @@ export interface PageElement {
   nodeId: number;
   role: string;
   label: string;
+  href?: string;
   value?: string;
   valueTruncated?: boolean;
   valueLength?: number;
@@ -43,7 +44,7 @@ export interface PageSnapshot {
   scrollTarget?: { nodeId: number; y: number; height: number; viewportHeight: number };
   elements: PageElement[];
   guards: Record<string, TargetGuard>;
-  diagnostics?: { omittedOffscreenControls?: number; busy?: boolean; modalScoped: boolean; candidates: number; rejected: Record<string, number>; iframeCount: number; source?: 'accessibility' | 'dom-fallback'; axNodes?: number; unmapped?: number };
+  diagnostics?: { omittedOffscreenControls?: number; busy?: boolean; modalScoped: boolean; candidates: number; rejected: Record<string, number>; unavailable?: Record<string, number>; iframeCount: number; requiresAccessibility?: boolean; source?: 'accessibility' | 'dom-fallback' | 'dom-fast'; axNodes?: number; unmapped?: number };
   tabs?: Array<{ id: string; title: string; url: string; active: boolean }>;
   tabRefs?: Record<string, number>;
   createdAt: number;
@@ -54,6 +55,7 @@ export interface TargetGuard {
   nodeId: number;
   role: string;
   label: string;
+  href?: string;
   value?: string;
   enabled: boolean;
   rect: { x: number; y: number; width: number; height: number };

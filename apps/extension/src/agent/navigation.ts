@@ -33,15 +33,39 @@ export async function waitForNavigation(
 ): Promise<void> {
   signal?.throwIfAborted();
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    signal?.throwIfAborted();
-    const tab = (await readTabs()).find(item => item.id === tabId);
-    signal?.throwIfAborted();
-    if (!tab) throw new Error("Task tab was closed during navigation.");
-    if (tab.status === "complete" && tab.url) { validateNavigationUrl(tab.url); return; }
-    await new Promise(resolve => setTimeout(resolve, 200));
+  const timeoutError = () => new Error(`Page did not finish loading within ${timeoutMs / 1000} seconds; task has not completed.`);
+  if (timeoutMs <= 0) throw timeoutError();
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  let pollTimer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  const interrupted = new Promise<never>((_resolve, reject) => {
+    deadlineTimer = setTimeout(() => reject(timeoutError()), timeoutMs);
+    onAbort = () => reject(signal!.reason);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+  });
+  try {
+    while (true) {
+      signal?.throwIfAborted();
+      if (Date.now() >= deadline) throw timeoutError();
+      // Browser APIs can stall independently of navigation. Race each wait so
+      // Stop and the deadline release the caller even if a query never settles.
+      const tabs = await Promise.race([readTabs(), interrupted]);
+      signal?.throwIfAborted();
+      if (Date.now() >= deadline) throw timeoutError();
+      const tab = tabs.find(item => item.id === tabId);
+      if (!tab) throw new Error("Task tab was closed during navigation.");
+      if (tab.status === "complete" && tab.url) { validateNavigationUrl(tab.url); return; }
+      await Promise.race([
+        new Promise<void>(resolve => { pollTimer = setTimeout(resolve, 200); }),
+        interrupted,
+      ]);
+    }
+  } finally {
+    clearTimeout(deadlineTimer);
+    clearTimeout(pollTimer);
+    if (onAbort) signal?.removeEventListener('abort', onAbort);
   }
-  throw new Error("Page did not finish loading within 30 seconds; task has not completed.");
 }
 
 // Preserve query parameters and fragments: they may identify different searches

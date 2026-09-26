@@ -4,7 +4,7 @@ import { ModelUsageLedger } from '../apps/extension/src/agent/model-usage';
 
 test('panel scopes live usage to request, saves final totals, restores history, and excludes metadata from prompts', async () => {
   const window = new Window({ settings: { disableCSSFileLoading: true, disableJavaScriptFileLoading: true } });
-  const stored: Record<string, any> = {};
+  const stored: Record<string, any> = { ulkaPersonalization: 'Keep answers concise.' };
   let listener: (value: unknown) => void = () => {};
   let request: any;
   let finish!: (response: unknown) => void;
@@ -24,8 +24,25 @@ test('panel scopes live usage to request, saves final totals, restores history, 
     const settingsToggle = window.document.querySelector<HTMLButtonElement>('#settings-toggle')!;
     settingsToggle.click();
     expect(settings.hidden).toBe(false);
+    expect(settings.querySelector('#engine')).toBeNull();
     expect(settings.parentElement!.tagName).toBe('HEADER');
     expect(window.document.activeElement!.id).toBe('api-key');
+    const personalization = window.document.querySelector<HTMLTextAreaElement>('#personalization')!;
+    expect(personalization.value).toBe('Keep answers concise.');
+    personalization.value = 'Explain plans before multi-step tasks.';
+    personalization.dispatchEvent(new window.Event('input', { bubbles: true }));
+    expect(window.document.querySelector('#personalization-status')!.textContent).toBe('Unsaved changes');
+    window.document.querySelector<HTMLButtonElement>('#save-personalization')!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(stored.ulkaPersonalization).toBe('Explain plans before multi-step tasks.');
+    personalization.value = 'x'.repeat(4_100);
+    window.document.querySelector<HTMLButtonElement>('#save-personalization')!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(stored.ulkaPersonalization).toHaveLength(4_000);
+    personalization.value = '';
+    window.document.querySelector<HTMLButtonElement>('#save-personalization')!.click();
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(stored.ulkaPersonalization).toBe('');
     settings.dispatchEvent(new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(settings.hidden).toBe(true);
     expect(window.document.activeElement).toBe(settingsToggle);

@@ -13,12 +13,11 @@ export interface ObservedAction {
   snapshotFingerprint: string;
 }
 
-export const observedActionSchema = z.object({
+export const observedActionReferenceSchema = z.object({
   id: z.string().min(1).max(300),
-  operation: z.enum(['RIGHT_CLICK', 'HOVER', 'ARROW_DOWN', 'ARROW_UP', 'SCROLL_ELEMENT_DOWN', 'SCROLL_ELEMENT_UP', 'CLICK', 'TYPE_TEXT', 'SELECT', 'SCROLL_UP', 'SCROLL_DOWN', 'PRESS_ENTER', 'PRESS_ESCAPE', 'GO_BACK', 'GO_FORWARD', 'RELOAD', 'OPEN_TAB', 'SWITCH_TAB', 'CLOSE_TAB', 'DOWNLOAD', 'WAIT']),
-  target: z.string().optional(), option: z.string().optional(), label: z.string().optional(), role: z.string().optional(),
-  description: z.string().min(1), snapshotFingerprint: z.string().min(1),
+  snapshotFingerprint: z.string().min(1),
 });
+export type ObservedActionReference = z.infer<typeof observedActionReferenceSchema>;
 
 export function observeActions(page: PageSnapshot): ObservedAction[] {
   const space = buildActionSpace(page);
@@ -46,4 +45,10 @@ export function observeActions(page: PageSnapshot): ObservedAction[] {
 
 export function decisionFromObservedAction(action: ObservedAction): AgentDecision {
   return { operation: action.operation, target: action.target, option: action.option, confidence: 1 };
+}
+
+// Resolve to the host's descriptor. Model-authored targets or operations never
+// define execution; the reference must belong to the latest captured catalog.
+export function resolveObservedAction(reference: ObservedActionReference, catalog: ObservedAction[]): ObservedAction | undefined {
+  return catalog.find(item => item.id === reference.id && item.snapshotFingerprint === reference.snapshotFingerprint);
 }

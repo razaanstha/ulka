@@ -125,6 +125,43 @@ test('settling polls DOM but returns fresh accessibility semantics', async () =>
   expect(pauses).toEqual([50, 50, 50]);
 });
 
+test('matching DOM and AX observations reuse fast DOM after a settled action', async () => {
+  let prepares = 0, domReads = 0, now = 0;
+  const raw = { pageIdentity: 'p', url: 'https://example.test', title: '', text: 'before', scroll: { y: 0, height: 100, viewportHeight: 100 },
+    elements: [{ id: 'e1', nodeId: 1, role: 'button', label: 'Open', operations: ['CLICK'] }], guards: {},
+    diagnostics: { modalScoped: false, candidates: 1, rejected: {}, iframeCount: 0, requiresAccessibility: false } };
+  const observer = new CdpObserver({ attach: async () => {}, detach: async () => {}, sendCommand: async (_target, method, params) => {
+    if (method !== 'Runtime.evaluate') throw new Error('Unexpected protocol call');
+    const ax = String(params?.expression).includes('const useAccessibility = true;');
+    if (!ax) domReads++;
+    return { result: { value: { ...raw, text: domReads >= 2 ? 'after' : 'before', diagnostics: { ...raw.diagnostics } } } };
+  } }, { tabId: 1 }, async ms => { now += ms; }, () => now);
+  (observer as any).accessibility.prepare = async () => { prepares++; return { source: 'accessibility' }; };
+  const before = await observer.observe();
+  const after = await observer.waitForChange(before);
+  expect(after.text).toBe('after');
+  expect(after.diagnostics?.source).toBe('dom-fast');
+  expect(prepares).toBe(1);
+});
+
+test('fast DOM settling refreshes AX when a new editor needs accessibility', async () => {
+  let prepares = 0, domReads = 0, now = 0;
+  const raw = { pageIdentity: 'p', url: 'https://example.test', title: '', text: 'before', scroll: { y: 0, height: 100, viewportHeight: 100 },
+    elements: [{ id: 'e1', nodeId: 1, role: 'button', label: 'Open', operations: ['CLICK'] }], guards: {},
+    diagnostics: { modalScoped: false, candidates: 1, rejected: {}, iframeCount: 0, requiresAccessibility: false } };
+  const observer = new CdpObserver({ attach: async () => {}, detach: async () => {}, sendCommand: async (_target, method, params) => {
+    if (method !== 'Runtime.evaluate') throw new Error('Unexpected protocol call');
+    const ax = String(params?.expression).includes('const useAccessibility = true;');
+    if (!ax) domReads++;
+    return { result: { value: { ...raw, text: domReads >= 2 ? 'after' : 'before',
+      diagnostics: { ...raw.diagnostics, requiresAccessibility: domReads >= 2 } } } };
+  } }, { tabId: 1 }, async ms => { now += ms; }, () => now);
+  (observer as any).accessibility.prepare = async () => { prepares++; return { source: 'accessibility' }; };
+  const after = await observer.waitForChange(await observer.observe());
+  expect(after.diagnostics?.source).toBe('accessibility');
+  expect(prepares).toBe(2);
+});
+
 test('fast DOM settling waits through loading and returns a delayed editor', async () => {
   let now = 0, prepares = 0;
   const raw = { pageIdentity: 'p', url: 'https://example.test', title: '', text: '', scroll: { y: 0, height: 100, viewportHeight: 100 }, elements: [], guards: {} };

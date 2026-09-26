@@ -1,0 +1,18 @@
+version: 2
+updates:
+  - package-ecosystem: bun
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      compatible-updates:
+        update-types:
+          - minor
+          - patch
+        exclude-patterns:
+          - libfx
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

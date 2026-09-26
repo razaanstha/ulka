@@ -46,3 +46,24 @@ test("Stop during navigation rejects even if the tab finishes loading", async ()
     return [{ id: 1, url: "https://example.test", status: "complete" }];
   }, 1000, controller.signal)).rejects.toThrow("Stopped");
 });
+
+test("Stop releases a stalled tab query and ignores its late result", async () => {
+  const controller = new AbortController();
+  let resolve!: (tabs: Array<{ id: number; url: string; status: string }>) => void;
+  const query = new Promise<Array<{ id: number; url: string; status: string }>>(done => { resolve = done; });
+  const pending = waitForNavigation(1, () => query, 1000, controller.signal);
+  controller.abort(new Error("Stopped"));
+  try { await expect(pending).rejects.toThrow("Stopped"); }
+  finally { resolve([{ id: 1, url: "https://example.test", status: "complete" }]); }
+}, 300);
+
+test("navigation deadline includes stalled browser queries", async () => {
+  await expect(waitForNavigation(1, () => new Promise(() => {}), 20)).rejects.toThrow("0.02 seconds");
+}, 300);
+
+test("late completed tab cannot bypass navigation deadline", async () => {
+  await expect(waitForNavigation(1, async () => {
+    await Bun.sleep(40);
+    return [{ id: 1, url: "https://example.test", status: "complete" }];
+  }, 10)).rejects.toThrow("has not completed");
+});

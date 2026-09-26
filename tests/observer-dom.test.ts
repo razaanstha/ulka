@@ -19,6 +19,16 @@ function page() {
 }
 
 describe("observer DOM integration", () => {
+  test('textarea combobox exposes typing while readonly search stays non-editable', () => {
+    const window = page();
+    window.document.body.innerHTML = '<textarea role="combobox" aria-label="Search" aria-autocomplete="both"></textarea><textarea role="combobox" aria-label="Locked search" readonly></textarea>';
+    const snapshot = window.eval(OBSERVER_EXPRESSION);
+    const search = snapshot.elements.find((e: any) => e.label === 'Search');
+    expect(search.operations).toContain('TYPE_TEXT');
+    expect(search.multiline).toBe(true);
+    expect(snapshot.elements.find((e: any) => e.label === 'Locked search').operations).not.toContain('TYPE_TEXT');
+    expect(window.eval(targetValidationExpression(snapshot.guards[search.id])).valid).toBe(true);
+  });
   test("preserves conversation and form relationships for rich-text message editors", () => {
     const window = page();
     window.document.body.innerHTML = `
@@ -105,7 +115,10 @@ describe("observer DOM integration", () => {
     Object.defineProperty(window.document, 'elementFromPoint', { configurable: true, value: (_x: number, y: number) => y >= 30 && y <= 40 ? link : window.document.body });
     const snapshot = window.eval(OBSERVER_EXPRESSION);
     expect(snapshot.elements).toHaveLength(1);
+    expect(snapshot.elements[0].href).toBe('https://example.test/note');
     expect(window.eval(targetValidationExpression(snapshot.guards.e1))).toMatchObject({ valid: true, x: 45, y: 35 });
+    link.href = '/different';
+    expect(window.eval(targetValidationExpression(snapshot.guards.e1))).toMatchObject({ valid: false, reason: 'link destination changed' });
   });
 
   test("modal with covered center still scopes observation to its controls", () => {

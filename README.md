@@ -13,7 +13,7 @@ https://x.com/razaanstha/status/2100708222847853043
 
 An experimental browser-agent extension. Runs locally in your browser, with model requests sent through Vercel AI Gateway. No application backend required.
 
-fx plans browser subgoals, GLM handles language tasks, and Jev selects constrained actions from observed page elements. Ulka validates targets, executes browser actions, and checks outcomes. It can still make mistakes: supervise it, especially on signed-in sites.
+FX plans browser subgoals, the configured language model handles writing and verification, and Jev selects constrained actions from observed page elements. Ulka validates targets, executes browser actions, and checks outcomes. It can still make mistakes: supervise it, especially on signed-in sites.
 
 ### Stagehand-style browser primitives
 
@@ -21,11 +21,14 @@ Ulka uses Stagehand-style patterns without importing Stagehand's separate CDP ru
 
 - `observe_browser` returns the current page plus an action catalog built from validated controls.
 - `browser_subgoal` provides natural-language `act` behavior through Jev, with deterministic execution and stale-target recovery.
-- `act_action` replays one action returned by `observe_browser` without another planning call, after exact snapshot validation.
+- `act_action` replays one action from the latest host-observed catalog without another planning call, after exact descriptor and snapshot validation.
 - `extract_page` returns schema-validated structured fields from the latest observed page. Missing or ambiguous fields return `null`.
+- `plan_task` tracks 2-8 ordered milestones for multi-step requests. The planner updates progress from observations; the independent final check still evaluates the original user request.
 - Successful `CLICK` and `SELECT` actions can replay across repeated subgoals only when URL, goal, semantic page state, and target meaning all match. Changed state falls back to Jev.
 
 This keeps Ulka's local browser ownership, approval gates, evidence capture, and final verification while adopting Stagehand's observe, act, extract, and caching model.
+
+Multi-step FX tasks retain the original request and milestone plan during verification recovery. Plans with at least three milestones have a 48-tool-call ceiling; ordinary tasks keep 24. Browser execution remains bounded by the shared 30-action and 60-runner-model-step allowances. Milestone status is planner memory, not evidence that an outcome occurred. Read-only browser tasks also receive a final check when the planner does not explicitly call `complete_task`.
 
 ## Setup
 
@@ -43,13 +46,15 @@ bun run build
 
 You can add or replace the key in Settings at any time. **No rebuild or extension reload is needed for key changes.** New requests use the saved key; stop an active task before replacing it. The key persists in this browser profile only. Each user supplies their own key, and no key belongs in source code, build files, or an `.env` file. **Saved** confirms local storage, not whether the key or model access is valid.
 
+Settings also has a **Personalization** field for custom writing and working instructions. Save or clear it there. New tasks use the saved text in FX planning and Jev field writing; current requests and browser approvals still take precedence. The text stays in this browser profile and is sent to the configured model with each new task.
+
 After rebuilding code, reload the extension **and refresh existing web pages** to update the injected progress controls. A separate test browser profile is recommended.
 
-The default **fx + Jev** engine requires WebAssembly JSPI. If unsupported, select **Classic** in advanced settings. WASM is bundled at build time; it is not fetched as executable code at runtime.
+Ulka uses **FX + Jev**. Existing Classic preferences are ignored. FX requires WebAssembly JSPI; use a browser version that supports it. WASM is bundled at build time; it is not fetched as executable code at runtime.
 
 ### WebMCP (FX)
 
-FX observations discover native WebMCP tools through `document.modelContext` (or the compatible `navigator.modelContext` alias). FX is instructed to prefer relevant website tools over equivalent UI actions; unsupported browsers and pages retain the existing Jev browser controls. No browser flags or permissions are changed automatically. Classic remains UI-only.
+FX observations discover native WebMCP tools through `document.modelContext` (or the compatible `navigator.modelContext` alias). FX is instructed to prefer relevant website tools over equivalent UI actions; unsupported browsers and pages retain the existing Jev browser controls. No browser flags or permissions are changed automatically.
 
 The initial integration supports tools registered in the task's main document, not iframe tools, remote MCP servers, page polyfills, or the older `modelContextTesting` API. Discovery runs in an isolated world and bounds metadata size. Each call requires approval with the website, tool name, and arguments, regardless of site-provided read-only hints. Handles are document-scoped, revalidated after approval, and consumed before invocation. Failed or interrupted executions stop the run rather than replaying potentially successful writes through another path. Successful calls still go through the final completion check. Tool metadata and output remain untrusted website content.
 
@@ -57,7 +62,7 @@ Rebuild and reload Ulka to enable this path. Native browser/site availability is
 
 ## Background tasks
 
-Choose **Settings → Tab behavior → Background** before starting a task. Start on the tab Ulka should use, then switch to another tab to keep browsing. Ulka keeps its task target, creates inactive tabs, and switches its own target without activating tabs. The setting applies to both engines and is fixed for each running task. Keep the side panel open for progress and approvals. Foreground remains the default.
+Choose **Settings → Tab behavior → Background** before starting a task. Start on the tab Ulka should use, then switch to another tab to keep browsing. Ulka keeps its task target, creates inactive tabs, and switches its own target without activating tabs. The setting is fixed for each running task. Keep the side panel open for progress and approvals. Foreground remains the default.
 
 Background mode uses the original task tab, not a duplicate. Some sites may pause work when hidden or require visible interaction; background compatibility is not guaranteed. Closing the current task tab stops work.
 
@@ -65,7 +70,7 @@ Background mode uses the original task tab, not a duplicate. Some sites may paus
 
 - Planning and verification: `deepseek/deepseek-v4.1-flash`. Field writing and content review also use `deepseek/deepseek-v4.1-flash`, with reasoning disabled. Mercury was removed from the active path after intermittent unrelated refusals in live field checks. Both configured in `apps/extension/src/agent/models.ts`.
 - Action selection: `typesafe-ai/jev`, configured in `apps/extension/src/agent/vercel-jev.ts`.
-- FX browsing skill: [`web-browsing/SKILL.md`](apps/extension/src/agent/skills/web-browsing/SKILL.md), bundled into the runtime prompt. Edit this file to maintain research, interaction, recovery, and evidence guidance; rebuild and reload the extension afterward. Classic retains its existing planner and Jev rules.
+- FX browsing skill: [`web-browsing/SKILL.md`](apps/extension/src/agent/skills/web-browsing/SKILL.md), bundled into the runtime prompt. Edit this file to maintain research, interaction, recovery, and evidence guidance; rebuild and reload the extension afterward.
 - Model availability and usage costs depend on Gateway and its providers. No subscriptions or credits are included.
 
 Supported tools include page reading, typing, clicks, keyboard input, scrolling, navigation, tab creation/switching/closing/grouping, download-link clicks, and download metadata. Native tab closing requires a prior inventory and the existing close approval, verifies the requested tabs disappeared, and keeps one tab open in the window. Background mode protects the visible and current task tabs. Conversations are saved locally. Streamed answers support Markdown; exposed reasoning is shown separately when available.
@@ -109,9 +114,9 @@ Each reply shows reported input/output tokens and estimated USD cost underneath 
 
 Cost uses the [Gateway public model catalog](https://vercel.com/docs/ai-gateway/models-and-providers), refreshed hourly while the worker remains active. These are estimates at input/output catalog rates, not bills: cache discounts, provider routing, extra fees, failed requests, and provider-internal retries can differ. Pricing lookup needs no API key or model call, and failure does not block browsing.
 
-Each completed task also logs `model_usage_summary`, separating FX turns, Jev evaluations, text generation, verification, and Classic planning/page answers. Missing provider usage is counted explicitly.
+Each completed task also logs `model_usage_summary`, separating FX turns, Jev evaluations, text generation, and verification. Missing provider usage is counted explicitly.
 
-Completion checks use low reasoning effort, an initial 1,200-token output cap, and no SDK retries. The harness retries a transient service error or invalid structured response once after 250ms using identical observations. Permanent errors and failed retries remain unverified and never replay browser actions. FX planning, Jev decisions, verification, and overall tasks have no harness time limits. Stop remains available; action-count and repeated-failure safeguards remain in place.
+Completion checks disable reasoning, use an initial 4,096-token output cap, and have no SDK retries. The harness retries a transient service error or invalid structured response once after 250ms using identical observations; malformed output gets an 8,192-token repair budget. Permanent errors and failed retries remain unverified and never replay browser actions. FX planning, Jev decisions, verification, and overall tasks have no harness time limits. Stop remains available; action-count and repeated-failure safeguards remain in place.
 
 Use `verification_start`, `verification_retry`, `verification_end`, and `verification_error` for input size, duration, usage, failure, and cancellation. `fx_turn_end` records tool time, reasoning/answer character counts, and time to first delta. Outside-tool time includes transport and FX overhead. Browser navigation waits, approval expiry, pricing lookups, and the standalone connection diagnostic retain their own bounded waits.
 
@@ -141,19 +146,23 @@ Exact field assignments from the latest original user message can bypass text ge
 
 ### Performance path and measurement
 
-Jev predicts operation and multi-candidate targets together in one request, sharing decision rules once. Only the selected operation's compatible target executes. Settling uses DOM snapshots against a pre-action DOM baseline, with fast changed-state checks and backoff while unchanged. Before the next decision it refreshes accessibility semantics and target guards. Existing wait budgets, loading checks, cancellation and final verification remain.
+Jev predicts operation and multi-candidate targets together in one request, sharing decision rules once. Only the selected operation's compatible target executes. A retryable Jev Gateway server error gets one native HTTP evaluation attempt after a single SDK attempt; browser actions are never replayed by this fallback. Settling uses DOM snapshots against a pre-action DOM baseline, with fast changed-state checks and backoff while unchanged. Before the next decision it refreshes accessibility semantics and target guards. Existing wait budgets, loading checks, cancellation and final verification remain.
 
-Text writing and review use Mercury 2.5 with reasoning disabled. This provider change requires access to that model through the saved Gateway key. There is no silent fallback to a different model and no new text timeout. Usage pricing distinguishes text stages from the planner.
+FX's bundled browsing instructions are concise and allow tool choice based on the task. Jev adds date, combobox, and form-context guidance only for relevant observed controls or goals. Runtime URL validation, approvals, target freshness, and final verification remain enforced outside the prompt.
+
+Text writing and review use DeepSeek V4.1 Flash with reasoning disabled. Mercury 2.5 remains only as a comparison arm in the synthetic benchmark. There is no silent fallback to a different model and no new text timeout. Usage pricing distinguishes text stages from the planner.
 
 For a paid, alternating comparison of the old and new text model settings, provide `AI_GATEWAY_API_KEY` through your shell environment and run `bun scripts/eval/benchmark-text.ts 3`. The benchmark checks public synthetic city, search, departure, and return inputs, includes generation plus review, retains failures, and reports p50/p95. It does not automate a browser or establish end-to-end browser reliability. No API key is read from a browser profile or written to reports.
 
-Help & diagnostics → **Test model** now checks the actual field-text, native-date, content-review and verification schemas, alongside transport probes. These are synthetic model calls using the saved key, without browser actions. A provider/validation failure is distinguished from selecting the wrong field, preventing FX from repeating the same broken text request through another browser subgoal.
+Help & diagnostics → **Test model** checks the actual field-text, native-date, content-review and verification schemas, transport probes, and synthetic Jev decisions through both the AI SDK route used by browser actions and Gateway's native `/v1/evaluate` HTTP route. Both use the saved key and the same Gateway policy, without browser actions. If both Jev checks fail, inspect Gateway status and request IDs; if only the SDK check fails, inspect the SDK transport. Production Jev errors retain the SDK and HTTP status codes, separating request rejection from server outage. A provider/validation failure is distinguished from selecting the wrong field, preventing FX from repeating the same broken text request through another browser subgoal.
+
+Navigation requires an exact URL supplied by the user, captured from an observed browser link or tab, or one of the known search homepages. FX rejects invented paths and query strings before navigating. Browser debugger collisions stop the task with a distinct error instead of being mistaken for Gateway failures.
 
 Summarize a saved diagnostics export without printing page content: `bun scripts/eval/analyze-diagnostics.ts <export.json>`. The report flags incomplete log envelopes and overlapping timing categories. Do not add FX tool duration to the nested model/verification durations.
 
 ### Selective completion checks
 
-Routine FX browser subgoals return **unverified checkpoints** with observed state instead of invoking a completion model each time. FX still verifies the whole task before reporting success. Subgoals that execute actions requiring approval retain their own completion check; Classic tasks retain task-level verification. Local target, schema, date and approval checks remain active.
+Routine FX browser subgoals return **unverified checkpoints** with observed state instead of invoking a completion model each time. FX still verifies the whole task before reporting success. Subgoals that execute actions requiring approval retain their own completion check. Local target, schema, date and approval checks remain active.
 
 An exact request such as `Search for "James Webb Space Telescope"` can bypass both text generation and content review when one unambiguous search field is observed. Ambiguous or composed text keeps the model path. A checkpoint is never proof of success.
 

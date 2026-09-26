@@ -6,17 +6,21 @@ import type { PendingQuestion } from './agent/user-question';
 import type { UsageSummary } from "./agent/model-usage";
 import { renderUsage } from "./usage-display";
 import { createChatScroll } from "./chat-scroll";
+import { createRenderBatch } from "./render-batch";
 import { chromeApi } from "./chrome";
 import { LOG_KEY, sanitize } from "./diagnostics";
-import type { ConversationMessage } from "./agent/conversation";
+import type { ConversationMessage } from "./agent/conversation-message";
 import { renderMarkdown } from "./markdown";
 import { formatApprovalRequest, type ApprovalRequest } from './agent/approval-request';
 import { LANGUAGE_MODEL } from "./agent/models";
+import { normalizePersonalization } from "./agent/personalization";
 
 const prompt = document.querySelector<HTMLTextAreaElement>("#prompt")!;
 const apiKey = document.querySelector<HTMLInputElement>("#api-key")!;
 document.querySelector<HTMLElement>("#model-name")!.textContent = LANGUAGE_MODEL;
 const keyStatus = document.querySelector<HTMLElement>("#key-status")!;
+const personalization = document.querySelector<HTMLTextAreaElement>("#personalization")!;
+const personalizationStatus = document.querySelector<HTMLElement>("#personalization-status")!;
 const state = document.querySelector<HTMLElement>("#state")!;
 const chat = document.querySelector<HTMLElement>("#chat")!;
 const chatScroll = createChatScroll(chat);
@@ -36,6 +40,16 @@ let thinking: HTMLDetailsElement | undefined;
 let thinkingBody: HTMLElement | undefined;
 let thinkingText = '';
 let thinkingScroll: ReturnType<typeof createChatScroll> | undefined;
+let answerDirty = false;
+let thinkingDirty = false;
+const streamRender = createRenderBatch(() => {
+  chatScroll.update(() => {
+    if (thinkingDirty && thinkingBody) thinkingScroll?.update(() => renderMarkdown(thinkingBody!, thinkingText));
+    if (answerDirty && streaming) renderMarkdown(streaming, streamedText);
+  });
+  answerDirty = false;
+  thinkingDirty = false;
+});
 let saveQueue = Promise.resolve();
 // Large searchable history dropdown, keeping the existing local chat storage.
 const header = document.querySelector('header')!;
@@ -133,18 +147,16 @@ void chromeApi.storage.local.get('ulkaChats').then(stored => {
 const approval = document.querySelector<HTMLDialogElement>("#approval")!;
 const approvalText = document.querySelector<HTMLElement>("#approval-text")!;
 let approvalId: string | undefined;
-const engine = document.querySelector<HTMLSelectElement>("#engine")!;
 const taskMode = document.querySelector<HTMLSelectElement>("#task-mode")!;
 void chromeApi.storage.local.get("ulkaBackground").then(stored => { taskMode.value = stored.ulkaBackground === true ? "background" : "foreground"; });
 taskMode.addEventListener("change", () => void chromeApi.storage.local.set({ ulkaBackground: taskMode.value === "background" }));
-void chromeApi.storage.local.get("ulkaEngine").then(stored => { engine.value = stored.ulkaEngine === "classic" ? "classic" : "fx"; });
-engine.addEventListener("change", () => void chromeApi.storage.local.set({ ulkaEngine: engine.value }));
 const progress = document.querySelector<HTMLElement>("#activity-detail")!;
 const diagnostics = document.querySelector<HTMLElement>("#diagnostics")!;
 const send = document.querySelector<HTMLButtonElement>("#send")!;
 const stop = document.querySelector<HTMLButtonElement>("#stop")!;
 let busy = false;
 const questionPanel = createUserQuestionPanel(document.querySelector<HTMLElement>('#user-question')!, message => chromeApi.runtime.sendMessage(message), (question, answer) => {
+  streamRender.flush();
   chatScroll.update(() => {
     // Seal pre-question output before inserting the answer and continuing below it.
     if (streaming) {
@@ -249,11 +261,34 @@ document.querySelector("#save-key")!.addEventListener("click", async () => {
   await chromeApi.storage.local.set({ vercelAiGatewayApiKey: value });
   keyStatus.textContent = "Saved";
 });
+let personalizationEdited = false;
+void chromeApi.storage.local.get("ulkaPersonalization").then(stored => {
+  if (!personalizationEdited) {
+    personalization.value = normalizePersonalization(stored.ulkaPersonalization);
+    if (personalization.value) personalizationStatus.textContent = "Saved";
+  }
+}).catch(() => { personalizationStatus.textContent = "Could not load personalization."; });
+personalization.addEventListener("input", () => { personalizationEdited = true; personalizationStatus.textContent = "Unsaved changes"; });
+const savePersonalization = document.querySelector<HTMLButtonElement>("#save-personalization")!;
+savePersonalization.addEventListener("click", async () => {
+  personalizationEdited = true;
+  savePersonalization.disabled = true;
+  const input = personalization.value;
+  const value = normalizePersonalization(personalization.value);
+  try {
+    await chromeApi.storage.local.set({ ulkaPersonalization: value });
+    if (personalization.value === input) {
+      personalization.value = value;
+      personalizationStatus.textContent = value ? "Saved for new tasks" : "Cleared";
+    } else personalizationStatus.textContent = "Unsaved changes";
+  } catch { personalizationStatus.textContent = "Could not save. Try again."; }
+  finally { savePersonalization.disabled = false; }
+});
 document.querySelector("#send")!.addEventListener("click", async () => {
   const content = prompt.value.trim();
   if (!content || busy || !historyReady) return;
   document.querySelector("#welcome")?.remove();
-  busy = true; document.body.dataset.busy = "true"; send.disabled = true; engine.disabled = true; taskMode.disabled = true; stop.hidden = false;
+  busy = true; document.body.dataset.busy = "true"; send.disabled = true; taskMode.disabled = true; stop.hidden = false;
   const started = Date.now();
   document.querySelector('#elapsed')!.textContent = '0s';
   const timer = setInterval(() => { document.querySelector("#elapsed")!.textContent = `${Math.floor((Date.now() - started) / 1000)}s`; }, 1000);
@@ -275,6 +310,9 @@ document.querySelector("#send")!.addEventListener("click", async () => {
     logStatus.textContent = "Connection failed. Download logs and include this error.";
   }
   currentUsage = response.usage ?? currentUsage;
+  // Final rendering is authoritative even while requestAnimationFrame is paused
+  // in a hidden panel. A queued frame must never touch the next conversation.
+  streamRender.cancel(); answerDirty = false; thinkingDirty = false;
   const elapsedMs = Math.max(0, Date.now() - started);
   const runStatus = response.result?.status ?? response.result?.result?.status;
   const usageIncomplete = !response.ok || runStatus === 'stopped' || runStatus === 'blocked';
@@ -297,7 +335,7 @@ document.querySelector("#send")!.addEventListener("click", async () => {
   thinking = undefined; thinkingBody = undefined; thinkingScroll = undefined;
   messages.push({ role: "assistant", content: reply, usage: currentUsage, usageIncomplete, elapsedMs }); renderMarkdown(streaming!, reply); streaming!.classList.remove("streaming"); streaming!.classList.toggle("error", !response.ok); streaming = undefined;
   saveConversation(); newButton.disabled = false;
-  clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; engine.disabled = false; taskMode.disabled = false; stop.hidden = true;
+  clearInterval(timer); busy = false; renderHistory(); document.body.dataset.busy = "false"; send.disabled = false; taskMode.disabled = false; stop.hidden = true;
   if (approval.open) approval.close();
   questionPanel.close();
   state.textContent = runStatus === "stopped" ? "Stopped" : usageIncomplete ? "Needs attention" : "Ready";
@@ -323,11 +361,11 @@ chromeApi.runtime.onMessage.addListener((raw) => {
   if (message.type === 'FX_REASONING'  && message.text && busy && thinkingBody) {
     thinkingText += message.text;
     if (thinking && thinkingText.trim()) thinking.hidden = false;
-    chatScroll.update(() => thinkingScroll?.update(() => renderMarkdown(thinkingBody!, thinkingText)));
+    thinkingDirty = true; streamRender.request();
   }
   if (message.type === "FX_PROGRESS" && message.text && streaming) {
     streamedText += message.text;
-    chatScroll.update(() => renderMarkdown(streaming!, streamedText));
+    answerDirty = true; streamRender.request();
   }
   if (message.type === "STATE" && message.state && busy) state.textContent = message.state.toLowerCase().replaceAll("_", " ");
   if (message.type === "TRACE" && message.event) {

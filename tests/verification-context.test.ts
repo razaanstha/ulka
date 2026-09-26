@@ -76,3 +76,23 @@ test('legacy plain text and explicit truncation markers remain evidence, never s
   expect(items[0].result).toBe('{"reading":"cut off');
   expect(items[1].result.page).toMatchObject({ textTruncated: true, omittedControls: 12 });
 });
+
+test('verification drops replay catalogs while preserving page states and extracted action facts', () => {
+  const actions = page.elements.flatMap(element => element.operations.map(operation => ({
+    id: `observed:${operation}:${element.id}`, operation, target: element.id, label: element.label,
+    description: 'Execute one observed browser action', snapshotFingerprint: 'observed-snapshot',
+  })));
+  const observation = { page: { controls: modelPage(page).elements }, actions, suggestedActions: actions.slice(0, 1) };
+  const evidence = [
+    { tool: 'observe_browser', observedAt: '1', result: JSON.stringify(observation) },
+    { tool: 'browser_subgoal', observedAt: '2', result: JSON.stringify({ status: 'checkpoint', observation }) },
+    { tool: 'extract_page', observedAt: '3', result: JSON.stringify({ status: 'extracted', result: { actions: ['Published article'] } }) },
+  ];
+  const packed = verificationContext('Read actions', page, [], evidence);
+  const items = packed.taskEvidence as any[];
+  expect(items[0].result.actions).toBeUndefined();
+  expect(items[1].result.observation.suggestedActions).toBeUndefined();
+  expect(decodeControls(packed, items[1].result.observation.page.controls)).toEqual(page.elements.map(({ nodeId, operations, ...state }) => state));
+  expect(items[2].result.result.actions).toEqual(['Published article']);
+  expect(JSON.stringify(packed).length).toBeLessThan(JSON.stringify(evidence).length * 0.2);
+});

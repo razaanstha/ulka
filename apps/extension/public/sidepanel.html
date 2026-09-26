@@ -15,12 +15,17 @@
       <div class="settings-key-note"><p id="key-hint" class="hint">Saved in this browser.</p><span id="key-status" class="hint" role="status"></span></div>
     </div>
     <div class="settings-group">
+      <label for="personalization">Personalization</label>
+      <textarea id="personalization" rows="4" maxlength="4000" placeholder="Example: Keep answers concise. Explain your plan for multi-step tasks." aria-describedby="personalization-hint"></textarea>
+      <div class="settings-key-note"><p id="personalization-hint" class="hint">Used for new tasks. Saved here and sent to your model.</p><button id="save-personalization">Save</button></div>
+      <p id="personalization-status" class="hint" role="status"></p>
+    </div>
+    <div class="settings-group">
       <label for="task-mode">Tab behavior</label><select id="task-mode" aria-describedby="task-mode-hint"><option value="foreground">Foreground</option><option value="background">Background</option></select>
       <p id="task-mode-hint" class="hint">Background keeps new tabs inactive. Start on your task tab and keep this panel open.</p>
     </div>
-    <details class="settings-section"><summary>Advanced</summary><label for="engine">Agent engine</label><select id="engine"><option value="fx">fx + Jev</option><option value="classic">Classic</option></select></details>
     <details id="diagnostics" class="settings-section"><summary>Help & diagnostics</summary>
-      <button id="test-model">Test model</button><p class="hint">Seven small checks. Uses API credits; no browser actions.</p>
+      <button id="test-model">Test model</button><p class="hint">Nine small checks, including Jev SDK and HTTP. Uses API credits; no browser actions.</p>
       <div class="settings-log-actions"><button id="download-logs">Download logs</button><button id="copy-logs">Copy logs</button></div>
       <textarea id="copy-logs-fallback" aria-label="Diagnostics ready to copy" readonly hidden rows="4" style="width:100%;box-sizing:border-box"></textarea>
       <p class="hint">Logs may contain page details. Review before sharing.</p>

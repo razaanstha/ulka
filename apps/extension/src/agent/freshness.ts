@@ -43,6 +43,8 @@ export function targetValidationExpression(guard: TargetGuard): string {
     const { x, y } = point;
     const label = ${JSON.stringify(guard.label)};
     const role = ${JSON.stringify(guard.role)};
+    const href = ${JSON.stringify(guard.href ?? null)};
+    if (href !== null && element.href !== href) return {valid:false, reason:'link destination changed'};
     ${ROLE_HELPERS}
     const currentRole = actionableRole(element) || 'unknown';
     const name = (node, seen = new Set()) => {

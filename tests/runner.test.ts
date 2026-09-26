@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { AgentRunner } from "../apps/extension/src/agent/agent-runner";
+import { AgentRunner, type TaskMemory } from "../apps/extension/src/agent/agent-runner";
+import { progressActionKey } from "../apps/extension/src/agent/history";
 import { StaleDecisionError } from "../apps/extension/src/agent/freshness";
 import { OutcomeVerifier, VerificationUnavailableError } from '../apps/extension/src/agent/outcome-verifier';
 import type { PageSnapshot } from "../packages/protocol/src";
@@ -9,6 +10,23 @@ const makeSnapshot = (fingerprint: string): PageSnapshot => ({ snapshotId: finge
   guards: { e1: { nodeId: 1, role: "button", label: "About", enabled: true, rect: { x: 0, y: 0, width: 10, height: 10 } } } });
 
 describe("agent runner", () => {
+  test('Escape yields an unverified subgoal checkpoint before repeating dismissal', async () => {
+    let actions = 0;
+    const memory: TaskMemory = { history: [], attempts: new Map() };
+    const page = { ...makeSnapshot('popup'), elements: [{ ...makeSnapshot('popup').elements[0], operations: ['PRESS_ESCAPE' as const] }] };
+    const run = () => new AgentRunner({ observe: async () => page } as never,
+      { decide: async () => ({ operation: 'PRESS_ESCAPE', target: 'e1', confidence: 1 }) },
+      { execute: async () => { actions++; } } as never, undefined,
+      { completionMode: 'subgoal', taskMemory: memory }).run('Dismiss overlay');
+    const first = await run();
+    expect(first.status).toBe('checkpoint');
+    expect(first.reason).toContain('unverified');
+    expect(actions).toBe(1);
+    expect(first.history[0].pageChanged).toBe(false);
+    expect((await run()).status).toBe('checkpoint');
+    expect((await run()).status).toBe('blocked');
+    expect(actions).toBe(3);
+  });
   test('popup focus transfer reobserves and explains recovery before typing into the new editor', async () => {
     let opened = false, decisions = 0;
     const typed: string[] = [];
@@ -357,6 +375,25 @@ test('next decision reuses settled post-action observation without another scan'
   expect(scans).toBe(1);
 });
 
+test('successful action becomes reusable across subgoals only after observed page change', async () => {
+  const memory: TaskMemory = { history: [], attempts: new Map<string, number>() };
+  let actions = 0, decisions = 0;
+  const before = makeSnapshot('before');
+  const after = { ...makeSnapshot('after'), text: 'Opened menu' };
+  const makeRunner = () => {
+    const startingActions = actions;
+    return new AgentRunner({ observe: async () => before, waitForChange: async () => after } as never,
+    { decide: async () => { decisions++; return actions > startingActions ? { operation: 'DONE', confidence: 1 } : { operation: 'CLICK', target: 'e1', confidence: 1 }; } },
+    { execute: async () => { actions++; } } as never, undefined,
+    { completionMode: 'subgoal', taskMemory: memory });
+  };
+  expect(await makeRunner().run('Open About menu')).toMatchObject({ status: 'checkpoint' });
+  expect(memory.actionCache?.size).toBe(1);
+  expect((await makeRunner().run('Open About menu')).status).toBe('checkpoint');
+  expect(actions).toBe(2);
+  expect(decisions).toBe(3);
+});
+
 test('page-state cycles remain bounded across separate subgoals', async () => {
   const memory = { history: [] as any[], attempts: new Map<string, number>() };
   let actions = 0;
@@ -450,4 +487,100 @@ test('task model-step budget survives handoffs even when no action executes', as
   expect((await makeRunner().run('Second')).status).toBe('checkpoint');
   expect(await makeRunner().run('Third')).toMatchObject({ status: 'blocked', failure: 'task_budget_exhausted' });
   expect(decisions).toBe(2);
+});
+
+test('replayed action returns fresh checkpoint without a second model-chosen action', async () => {
+  const taskBudget = { remainingActions: 2, remainingModelSteps: 1 };
+  let actions = 0, decisions = 0;
+  const runner = new AgentRunner({ observe: async () => makeSnapshot(String(actions)) } as never,
+    { decide: async () => { decisions++; return { operation: 'CLICK', target: 'e1', confidence: 1 }; } },
+    { execute: async () => { actions++; } } as never, undefined,
+    { completionMode: 'subgoal', taskBudget, initialDecision: { operation: 'CLICK', target: 'e1', confidence: 1 } });
+  expect((await runner.run('Open About')).status).toBe('checkpoint');
+  expect(actions).toBe(1);
+  expect(decisions).toBe(0);
+  expect(taskBudget.remainingModelSteps).toBe(1);
+});
+
+test('stale replay never substitutes another action', async () => {
+  let decisions = 0, actions = 0;
+  const runner = new AgentRunner({ observe: async () => makeSnapshot('ready') } as never,
+    { decide: async () => { decisions++; return { operation: 'DONE', confidence: 1 }; } },
+    { execute: async () => { actions++; throw new StaleDecisionError('Focus changed'); } } as never,
+    undefined, { completionMode: 'subgoal', initialDecision: { operation: 'CLICK', target: 'e1', confidence: 1 } });
+  expect((await runner.run('Click once')).status).toBe('blocked');
+  expect(actions).toBe(1);
+  expect(decisions).toBe(0);
+});
+
+test('typing hands settled field evidence to the planner before a repeated replacement', async () => {
+  let value = '', decisions = 0, writes = 0;
+  const observe = async () => ({ ...makeSnapshot(value || 'empty'), elements: [
+    { id: value ? 'e17' : 'e14', nodeId: 123, role: 'textbox', label: 'Write a message', value, multiline: true, operations: ['TYPE_TEXT' as const] },
+  ] });
+  const runner = new AgentRunner({ observe } as never,
+    { decide: async (_goal, page) => { decisions++; return { operation: 'TYPE_TEXT', target: page.elements[0].id, confidence: 1 }; } },
+    { execute: async (_page: PageSnapshot, _decision: unknown, text: string) => { writes++; value = text; } } as never,
+    undefined, { completionMode: 'subgoal' }, { generate: async () => 'Hello, how are you?' });
+  const result = await runner.run('Draft a greeting without sending');
+  expect(result.status).toBe('checkpoint');
+  expect(result.reason).toContain('unverified');
+  expect([writes, decisions]).toEqual([1, 1]);
+  expect(result.history[0]).toMatchObject({ text: value, pageChanged: true });
+});
+
+test('already matching text is not replaced and task mode can commit instead', async () => {
+  let decisions = 0, generations = 0;
+  const writes: string[] = [];
+  const page: PageSnapshot = { ...makeSnapshot('filled'), elements: [
+    { id: 'e1', nodeId: 1, role: 'searchbox', label: 'Search', value: 'Oslo', operations: ['TYPE_TEXT', 'PRESS_ENTER'] },
+  ] };
+  const runner = new AgentRunner({ observe: async () => page } as never,
+    { decide: async (_goal, _page, _history, feedback) => {
+      decisions++;
+      if (decisions === 1) return { operation: 'TYPE_TEXT', target: 'e1', confidence: 1 };
+      if (decisions === 2) {
+        expect(feedback?.evidence).toContain('already matches');
+        expect(feedback?.exhaustedActions).toContain(progressActionKey(page, { operation: 'TYPE_TEXT', target: 'e1' })!);
+        return { operation: 'PRESS_ENTER', target: 'e1', confidence: 1 };
+      }
+      return { operation: 'DONE', confidence: 1 };
+    } }, { execute: async (_page: PageSnapshot, decision: { operation: string }) => { writes.push(decision.operation); } } as never,
+    undefined, {}, { generate: async () => { generations++; return 'Oslo'; } },
+    { verify: async () => ({ satisfied: true, evidence: 'Search submitted' }) });
+  expect((await runner.run('Search Oslo')).status).toBe('done');
+  expect(writes).toEqual(['PRESS_ENTER']);
+  expect(generations).toBe(1);
+});
+
+test('matching-value handoffs preserve action budget and allow a later requested correction', async () => {
+  const memory: TaskMemory = { history: [], attempts: new Map() };
+  const budget = { remainingActions: 1, remainingModelSteps: 20 };
+  let value = 'Existing draft', writes = 0;
+  const run = (text: string) => new AgentRunner({ observe: async () => ({ ...makeSnapshot('editor'), elements: [
+    { id: 'e1', nodeId: 1, role: 'textbox', label: 'Message', value, operations: ['TYPE_TEXT' as const] },
+  ] }) } as never, { decide: async () => ({ operation: 'TYPE_TEXT', target: 'e1', confidence: 1 }) },
+  { execute: async (_page: PageSnapshot, _decision: unknown, text: string) => { writes++; value = text; } } as never,
+  undefined, { completionMode: 'subgoal', taskMemory: memory, taskBudget: budget }, { generate: async () => text }).run(`Use draft: ${text}`);
+  for (let i = 0; i < 4; i++) expect((await run(value)).status).toBe('checkpoint');
+  expect(budget.remainingActions).toBe(1);
+  expect(memory.attempts.size).toBe(0);
+  expect(memory.history).toHaveLength(0);
+  expect((await run('Corrected draft')).status).toBe('checkpoint');
+  expect(value).toBe('Corrected draft');
+  expect(writes).toBe(1);
+  expect(budget.remainingActions).toBe(0);
+});
+
+test('a truncated matching preview does not suppress a required full replacement', async () => {
+  let writes = 0;
+  const page: PageSnapshot = { ...makeSnapshot('truncated'), elements: [
+    { id: 'e1', nodeId: 1, role: 'textbox', label: 'Message', value: 'Requested text', valueTruncated: true, valueLength: 5000, operations: ['TYPE_TEXT'] },
+  ] };
+  const runner = new AgentRunner({ observe: async () => page } as never,
+    { decide: async () => ({ operation: 'TYPE_TEXT', target: 'e1', confidence: 1 }) },
+    { execute: async () => { writes++; } } as never, undefined, { completionMode: 'subgoal' },
+    { generate: async () => 'Requested text' });
+  expect((await runner.run('Replace message with requested text')).status).toBe('checkpoint');
+  expect(writes).toBe(1);
 });

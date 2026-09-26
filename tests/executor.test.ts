@@ -69,6 +69,9 @@ test('Enter accepts combobox suggestion without clicking and collapsing popup', 
   await executor.execute(page, { operation: 'PRESS_ENTER', target: 'e1', confidence: 1 });
   expect(calls.some(call => call.method === 'Input.dispatchMouseEvent')).toBe(false);
   expect(calls.filter(call => call.method === 'Input.dispatchKeyEvent').map(call => [call.type, call.key])).toEqual([['keyDown', 'Enter'], ['keyUp', 'Enter']]);
+  expect(calls.find(call => call.type === 'keyDown')).toMatchObject({ windowsVirtualKeyCode: 13, text: '\r', unmodifiedText: '\r' });
+  expect(calls.find(call => call.type === 'keyUp')).toMatchObject({ windowsVirtualKeyCode: 13 });
+  expect(calls.find(call => call.type === 'keyUp').text).toBeUndefined();
 });
 
 test('typing stops when click redirects focus or selecting the full value fails', async () => {

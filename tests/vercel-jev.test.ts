@@ -10,6 +10,34 @@ const snapshot: PageSnapshot = {
   guards: { e1: { nodeId: 1, role: "button", label: "About", enabled: true, rect: { x: 0, y: 0, width: 10, height: 10 } } },
 };
 
+test('Jev gives generic pages short rules and adds widget guidance only when relevant', async () => {
+  let genericRules = '';
+  await new VercelJevDecisionEngine('test', async (input: any): Promise<any> => {
+    genericRules = input.state.decision_rules;
+    return combinedAnswers(input, 'CLICK', 'e1');
+  }).decide('Open About', snapshot, []);
+  expect(genericRules.length).toBeLessThan(400);
+  expect(genericRules).not.toContain('Apply/Done');
+  expect(genericRules).not.toContain('activeOptionId');
+
+  const returnPage: PageSnapshot = { ...snapshot, elements: [
+    { id: 'back', nodeId: 3, role: 'button', label: 'Return', operations: ['CLICK'] },
+  ] };
+  await new VercelJevDecisionEngine('test', async (input: any): Promise<any> => {
+    expect(input.state.decision_rules).not.toContain('Apply/Done');
+    return combinedAnswers(input, 'CLICK', 'back');
+  }).decide('Return to the previous page', returnPage, []);
+
+  const searchPage: PageSnapshot = { ...snapshot, elements: [
+    { id: 'search', nodeId: 2, role: 'combobox', label: 'Search', operations: ['TYPE_TEXT', 'CLICK'] },
+  ] };
+  await new VercelJevDecisionEngine('test', async (input: any): Promise<any> => {
+    expect(input.state.decision_rules).toContain('activeOptionId');
+    expect(input.state.decision_rules).not.toContain('Apply/Done');
+    return combinedAnswers(input, 'TYPE_TEXT', 'search');
+  }).decide('Search for a topic', searchPage, []);
+});
+
 test('a just-entered date advances to confirmation instead of retyping the same value', async () => {
   const field = { id: 'end', nodeId: 2, role: 'textbox', label: 'Return', value: '2026-10-10', operations: ['TYPE_TEXT', 'PRESS_ENTER'] as const };
   const page: PageSnapshot = { ...snapshot, elements: [
@@ -61,6 +89,80 @@ test('editable date fields advertise direct entry while read-only calendars reta
 });
 
 describe("Vercel Gateway Jev engine", () => {
+  test('server error uses one SDK attempt then native HTTP with the same request and policy', async () => {
+    let sdkCalls = 0, httpCalls = 0;
+    const page = snapshot;
+    const evaluator = async (input: any): Promise<any> => {
+      sdkCalls++;
+      expect(input.maxRetries).toBe(0);
+      expect(input.providerOptions.gateway.zeroDataRetention).toBe(false);
+      throw Object.assign(new Error('Gateway unavailable'), { name: 'GatewayInternalServerError', statusCode: 500 });
+    };
+    const httpFetch = async (url: any, init: any): Promise<Response> => {
+      httpCalls++;
+      expect(String(url)).toBe('https://ai-gateway.vercel.sh/v1/evaluate');
+      expect(new Headers(init.headers).get('authorization')).toBe('Bearer test');
+      const body = JSON.parse(String(init.body));
+      expect(body.model).toBe('typesafe-ai/jev');
+      expect(body.state.page.url).toBe(page.url);
+      expect(body.questions.operation.type).toBe('choice');
+      expect(body.providerOptions.gateway.zeroDataRetention).toBe(false);
+      return Response.json(combinedAnswers({ questions: body.questions }, 'CLICK', 'e1'));
+    };
+    const result = await new VercelJevDecisionEngine('test', evaluator, undefined, undefined, httpFetch).decide('Click About', page, []);
+    expect(result).toMatchObject({ operation: 'CLICK', target: 'e1' });
+    expect([sdkCalls, httpCalls]).toEqual([1, 1]);
+  });
+
+  test('client errors never trigger HTTP fallback', async () => {
+    let httpCalls = 0;
+    const evaluator = async (input: any): Promise<any> => {
+      expect(input.maxRetries).toBe(0);
+      throw Object.assign(new Error('Bad request'), { statusCode: 400 });
+    };
+    const httpFetch = async (): Promise<Response> => { httpCalls++; return Response.json({}); };
+    await expect(new VercelJevDecisionEngine('test', evaluator, undefined, undefined, httpFetch).decide('Click About', snapshot, [])).rejects.toThrow('Bad request');
+    expect(httpCalls).toBe(0);
+  });
+
+  test('two failed Gateway routes produce a terminal provider error', async () => {
+    let httpCalls = 0;
+    const evaluator = async (): Promise<any> => { throw Object.assign(new Error('Unavailable'), { statusCode: 503 }); };
+    const httpFetch = async (): Promise<Response> => { httpCalls++; return new Response('Unavailable', { status: 503 }); };
+    await expect(new VercelJevDecisionEngine('test', evaluator, undefined, undefined, httpFetch).decide('Click About', snapshot, [])).rejects.toMatchObject({ name: 'JevGatewayUnavailableError', message: expect.stringContaining('SDK 503; HTTP 503') });
+    expect(httpCalls).toBe(1);
+  });
+
+  test('HTTP 400 after SDK server error is reported as request rejection', async () => {
+    const evaluator = async (): Promise<any> => { throw Object.assign(new Error('Unavailable'), { statusCode: 500 }); };
+    const httpFetch = async (): Promise<Response> => new Response('Bad request', { status: 400 });
+    await expect(new VercelJevDecisionEngine('test', evaluator, undefined, undefined, httpFetch).decide('Click About', snapshot, [])).rejects.toMatchObject({
+      name: 'JevGatewayRejectedError', message: expect.stringContaining('SDK 500; HTTP 400'),
+    });
+  });
+
+  test('HTTP 200 without answers is reported as invalid response', async () => {
+    const evaluator = async (): Promise<any> => { throw Object.assign(new Error('Unavailable'), { statusCode: 500 }); };
+    const httpFetch = async (): Promise<Response> => Response.json({ model: 'typesafe-ai/jev' });
+    await expect(new VercelJevDecisionEngine('test', evaluator, undefined, undefined, httpFetch).decide('Click About', snapshot, [])).rejects.toMatchObject({ name: 'JevGatewayInvalidResponseError' });
+  });
+
+  test('Stop releases a stalled HTTP fallback', async () => {
+    const controller = new AbortController();
+    let fallbackStarted!: () => void;
+    const started = new Promise<void>(resolve => { fallbackStarted = resolve; });
+    const evaluator = async (): Promise<any> => { throw Object.assign(new Error('Unavailable'), { statusCode: 500 }); };
+    const httpFetch = async (_url: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      expect(init?.signal).toBe(controller.signal);
+      fallbackStarted();
+      return new Promise(() => {});
+    };
+    const pending = new VercelJevDecisionEngine('test', evaluator, controller.signal, undefined, httpFetch).decide('Click About', snapshot, []);
+    await started;
+    controller.abort(new Error('Stopped by user'));
+    await expect(pending).rejects.toThrow('Stopped by user');
+  });
+
   test('Stop cancels stalled evaluation even if transport ignores cancellation', async () => {
     const controller = new AbortController();
     let requestSignal: AbortSignal | undefined;
@@ -252,6 +354,7 @@ test('combined decision heads retain message editor structure and conversation r
   };
   const result = await new VercelJevDecisionEngine('test', evaluator).decide('Draft the message', page, []);
   expect(result.target).toBe('e2');
+  expect(requests[0].state.decision_rules).toContain('recipient and message editor');
   for (const rows of [requests[0].state.elements]) {
     expect(rows[0].context[0]).toEqual(context[0]);
     expect(rows[1].context).toEqual(page.elements[1].context);

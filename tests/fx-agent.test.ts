@@ -4,6 +4,47 @@ import type { FxTool } from "libfx/browser";
 import { WEB_BROWSING_SKILL } from "../apps/extension/src/agent/skills/web-browsing";
 import { VerificationUnavailableError } from '../apps/extension/src/agent/outcome-verifier';
 
+test('unsupported JSPI stops before creating an FX agent', async () => {
+  const { host } = fixture();
+  let created = false;
+  const runtime = { supportsJspi: () => false, createFxAgent: async () => { created = true; throw new Error('Unexpected agent'); } };
+  await expect(runFxBrowser('test', [{ role: 'user', content: 'Read this page' }], host, new AbortController().signal, runtime))
+    .rejects.toThrow('FX requires WebAssembly JSPI. Update Helium or use a browser that supports JSPI.');
+  expect(created).toBe(false);
+});
+
+test('replayed actions require final verification even without browser_subgoals', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let checks = 0, actions = 0;
+  const action = { id: 'observed:CLICK:e1', operation: 'CLICK' as const, target: 'e1',
+    label: 'Continue', role: 'button', description: 'Continue', snapshotFingerprint: 'observed-state' };
+  host.actAction = async () => { actions++; return { status: 'checkpoint' }; };
+  host.verify = async () => { checks++; throw new VerificationUnavailableError(); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await tools.find(t => t.name === 'act_action')!.execute({ goal: 'Continue', action }, { signal });
+  }));
+  expect(actions).toBe(1);
+  expect(checks).toBe(1);
+  expect(result.status).toBe('blocked');
+});
+
+test('planner receives exact replay actions and extracted values', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const action = { id: 'observed:TYPE_TEXT:e1', operation: 'TYPE_TEXT' as const, target: 'e1',
+    label: 'Name', role: 'textbox', description: 'Enter text', snapshotFingerprint: 'opaque-fingerprint' };
+  host.observe = async () => ({ page: { elements: [{id:'e1',role:'textbox',label:'Name'}] }, actions: [action], suggestedActions: [action] });
+  host.actAction = async input => { expect(input.action).toEqual({ id: action.id, snapshotFingerprint: action.snapshotFingerprint }); return {status:'checkpoint'}; };
+  host.extractPage = async () => ({status:'extracted', url:'https://example.test/', result:{name:'Ulka reliability test', checked:true}});
+  await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const observed = await tools.find(t => t.name === 'observe_browser')!.execute({}, {signal}) as any;
+    expect(observed.actions).toEqual([action]);
+    expect(observed.suggestedActions).toEqual([action]);
+    await tools.find(t => t.name === 'act_action')!.execute({goal:'Enter name',action:observed.actions[0]}, {signal});
+    const extracted = await tools.find(t => t.name === 'extract_page')!.execute({instruction:'Read values',fields:[{name:'name',type:'string',description:'Name'}]}, {signal});
+    expect(extracted).toMatchObject({status:'extracted',url:'https://example.test/',result:{name:'Ulka reliability test',checked:true}});
+  }));
+});
+
 test('FX exposes WebMCP catalog and verifies successful tool results', async () => {
   const { host } = fixture(); const signal = new AbortController().signal;
   const catalog = { available: true, tools: [{ id: 'observed:0', name: 'search', inputSchema: { type: 'object' } }] };
@@ -115,7 +156,7 @@ test("FX receives the bundled browsing skill without discovery metadata", async 
     expect(typeof options.fetch).toBe('function');
     return base.createFxAgent(options);
   } };
-  await runFxBrowser("test", [{ role: "user", content: "Read this page" }], host, new AbortController().signal, runtime);
+  await runFxBrowser("test", [{ role: "user", content: "Read this page" }], host, new AbortController().signal, runtime, 'Explain each milestone briefly.');
   const document = await Bun.file("apps/extension/src/agent/skills/web-browsing/SKILL.md").text();
   const body = document.slice(document.indexOf("\n---", 3) + 4).trim();
   expect(WEB_BROWSING_SKILL).toBe(body);
@@ -126,6 +167,9 @@ test("FX receives the bundled browsing skill without discovery metadata", async 
   expect(instructions).toContain("browser_subgoal");
   expect(instructions).toContain("complete_task");
   expect(instructions).toContain("Never claim completion without observed evidence");
+  expect(instructions).toContain('Explain each milestone briefly.');
+  expect(instructions).toContain('approval requirements, and tool safeguards take precedence');
+  expect(new TextEncoder().encode(instructions).length).toBeLessThan(7_000);
 });
 
 function fixture(satisfied = true) {
@@ -142,6 +186,11 @@ function fixture(satisfied = true) {
 
 test('FX exposes native close and retains closure evidence without page actions', async () => {
   const { host, calls } = fixture(); const signal = new AbortController().signal;
+  host.verify = async (_goal, evidence) => {
+    calls.push('verify');
+    expect(JSON.parse(evidence![0].result).closedTabIds).toEqual([2]);
+    return { satisfied: true, evidence: 'Tab closure observed' };
+  };
   host.nativeTabs = async input => {
     expect(input).toMatchObject({ operation: 'close', tabIds: [2] });
     return { status: 'done', closedTabIds: [2], taskTabId: 1, tabs: [{ id: 1, active: true }] };
@@ -150,7 +199,7 @@ test('FX exposes native close and retains closure evidence without page actions'
     expect(await tools.find(tool => tool.name === 'native_tabs')!.execute({ operation: 'close', tabIds: [2] }, { signal }))
       .toMatchObject({ status: 'done', closedTabIds: [2], taskTabId: 1 });
   }));
-  expect(result.status).toBe('done'); expect(calls).toEqual([]);
+  expect(result.status).toBe('done'); expect(calls).toEqual(['verify']);
 });
 
 test('verified complete_task ends FX turn immediately', async () => {
@@ -160,6 +209,74 @@ test('verified complete_task ends FX turn immediately', async () => {
   }));
   expect(result.status).toBe('done');
   expect(calls).toEqual(['verify']);
+});
+
+test('complete_task checks the streamed answer separately from captured evidence', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let checks = 0;
+  host.observe = async () => ({ page: { text: 'Continued', elements: [{ label: 'Country', value: 'Sweden' }] } });
+  host.verify = async (goal, evidence) => {
+    checks++;
+    expect(JSON.parse(goal).proposedAnswer).toBe('Country: Sweden. Continue confirmed.');
+    expect(evidence).toHaveLength(1);
+    expect(evidence![0].tool).toBe('observe_browser');
+    expect(JSON.parse(evidence![0].result).page.text).toBe('Continued');
+    return { satisfied: true, evidence: 'Answer matches captured controls' };
+  };
+  const runtime = { supportsJspi: () => true, createFxAgent: async (options: Parameters<typeof import('libfx/browser').createFxAgent>[0]) => ({
+    prompt: () => ({
+      async *[Symbol.asyncIterator]() {
+        await options.tools.find(t => t.name === 'observe_browser')!.execute({}, {signal});
+        yield { type: 'text_delta', delta: 'Country: Sweden. Continue confirmed.' };
+        await options.tools.find(t => t.name === 'complete_task')!.execute({}, {signal});
+      },
+      result: Promise.resolve({stopReason:'stop',usage:{}}), cancel() {},
+    }), close: async () => {},
+  }) };
+  expect((await runFxBrowser('test', [{role:'user',content:'Report final values'}], host, signal, runtime)).status).toBe('done');
+  expect(checks).toBe(1);
+});
+
+test('runtime resolving cancellation preserves completion without duplicate verification', async () => {
+  const { host, calls } = fixture(); const signal = new AbortController().signal;
+  const runtime = { supportsJspi: () => true, createFxAgent: async (options: Parameters<typeof import('libfx/browser').createFxAgent>[0]) => ({
+    prompt: () => ({
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'text_delta', delta: 'Values verified.' };
+        await options.tools.find(t => t.name === 'browser_subgoal')!.execute({goal:'Fill form'}, {signal});
+        try { await options.tools.find(t => t.name === 'complete_task')!.execute({}, {signal}); }
+        catch (error) { expect((error as Error).name).toBe('AbortError'); }
+      },
+      result: Promise.resolve({stopReason:'cancelled',usage:{}}), cancel() {},
+    }), close: async () => {},
+  }) };
+  expect(await runFxBrowser('test', [], host, signal, runtime)).toMatchObject({status:'done',reply:'Values verified.'});
+  expect(calls.filter(call => call === 'verify')).toHaveLength(1);
+});
+
+test('protected extension access stops retries and preserves partial-progress warning', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal; let calls = 0;
+  host.act = async () => { calls++; throw new Error('Cannot access a chrome-extension:// URL of different extension'); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const act = tools.find(t => t.name === 'browser_subgoal')!;
+    await expect(act.execute({goal:'Continue'}, {signal})).rejects.toThrow('Cannot access');
+    await expect(act.execute({goal:'Continue'}, {signal})).rejects.toThrow('protected extension');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(result.reply).toContain('Earlier actions may have completed');
+  expect(calls).toBe(1);
+});
+
+test('exhausted observation gateway attempts stop the task without repeating observation', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal; let calls = 0;
+  host.observe = async () => { calls++; throw Object.assign(new Error('Service unavailable'), {name:'JevGatewayUnavailableError'}); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const observe = tools.find(t => t.name === 'observe_browser')!;
+    await expect(observe.execute({}, {signal})).rejects.toThrow('Service unavailable');
+    await expect(observe.execute({}, {signal})).rejects.toThrow('Jev provider unavailable');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(calls).toBe(1);
 });
 
 test('scroll checkpoint supplies page evidence automatically before another subgoal', async () => {
@@ -249,9 +366,131 @@ test("three tool errors prevent further provider retry loops", async () => {
   host.act = async () => { calls++; throw new Error("model_unavailable"); };
   const result = await runFxBrowser("test", [], host, signal, fakeRuntime(async tools => {
     for (let i = 0; i < 3; i++) await expect(tools[2].execute({ goal: "Continue" }, { signal })).rejects.toThrow("model_unavailable");
-    await expect(tools[2].execute({ goal: "Continue" }, { signal })).rejects.toThrow("three tool errors");
+    await expect(tools[2].execute({ goal: "Continue" }, { signal })).rejects.toThrow("three consecutive tool errors");
   }));
   expect(result.status).toBe("blocked"); expect(calls).toBe(3);
+});
+
+test('successful browser observation clears earlier tool errors during a multi-step task', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  let failures = 0;
+  host.act = async () => { failures++; throw new Error('Transient action failure'); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const act = tools.find(tool => tool.name === 'browser_subgoal')!;
+    const observe = tools.find(tool => tool.name === 'observe_browser')!;
+    for (let i = 0; i < 3; i++) {
+      await expect(act.execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Transient action failure');
+      if (i < 2) await observe.execute({}, { signal });
+    }
+  }));
+  expect(failures).toBe(3);
+  expect(result.status).toBe('done');
+});
+
+test('invalid planner tool arguments enter diagnostics and stop repeated schema failures', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const events: Array<{ event: string; data: any }> = [];
+  let navigations = 0;
+  host.log = (event, data) => { events.push({ event, data }); };
+  host.navigate = async () => { navigations++; return {}; };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const navigate = tools.find(tool => tool.name === 'navigate_browser')!;
+    for (let i = 0; i < 3; i++) await expect(navigate.execute({ url: 'https://example.test/' }, { signal })).rejects.toThrow();
+    await expect(navigate.execute({ url: 'https://example.test/', newTab: false }, { signal })).rejects.toThrow('three consecutive tool errors');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(navigations).toBe(0);
+  expect(events.filter(item => item.event === 'fx_tool_error')).toHaveLength(3);
+  expect(events.filter(item => item.event === 'fx_tool_error').at(-1)?.data.consecutiveToolErrors).toBe(3);
+});
+
+test('named-site search opens a fixed search origin with encoded query', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const destinations: string[] = [];
+  host.navigate = async url => { destinations.push(url); return { page: { url } }; };
+  const result = await runFxBrowser('test', [{ role: 'user', content: 'Open X' }], host, signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'search_web')!.execute({ query: 'X official website' }, { signal });
+  }));
+  expect(destinations).toEqual(['https://www.google.com/search?q=X+official+website']);
+  expect(result.status).toBe('done');
+});
+
+test('repeated browser snapshot sends a short planner result but keeps full verification evidence', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const action = { id: 'observed:CLICK:e1', operation: 'CLICK' as const, target: 'e1',
+    label: 'Open', role: 'link', description: 'Open', snapshotFingerprint: 'same-page' };
+  host.observe = async () => ({ page: { fingerprint: 'same-page', url: 'https://example.test/', title: 'Home',
+    text: 'Page details', elements: [{ id: 'e1', role: 'link', label: 'Open' }] }, actions: [action] });
+  host.verify = async (_goal, evidence) => {
+    expect(evidence).toHaveLength(2);
+    expect(JSON.parse(evidence![1].result).page.controls[0].label).toBe('Open');
+    return { satisfied: true, evidence: 'Page observed' };
+  };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const observe = tools.find(tool => tool.name === 'observe_browser')!;
+    const first = await observe.execute({}, { signal }) as any;
+    const second = await observe.execute({}, { signal }) as any;
+    expect(first.page.controls[0].label).toBe('Open');
+    expect(second.page).toMatchObject({ fingerprint: 'same-page', unchangedSincePreviousObservation: true });
+    expect(second.actionsUnchanged).toBe(true);
+    expect(JSON.stringify(second).length).toBeLessThan(JSON.stringify(first).length / 2);
+  }));
+  expect(result.status).toBe('done');
+});
+
+test('exhausted Jev provider retries stop FX before replaying same subgoal', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal; let calls = 0;
+  const events: string[] = [];
+  host.log = event => { events.push(event); };
+  host.act = async () => {
+    calls++;
+    throw Object.assign(new Error('Failed after 3 attempts. Last error: GatewayInternalServerError: Service temporarily unavailable.'), { name: 'AI_RetryError' });
+  };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Failed after 3 attempts');
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Jev provider unavailable');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(result.reply).toContain('Jev provider unavailable');
+  expect(calls).toBe(1);
+  expect(events).toContain('fx_tool_error');
+  expect(events).not.toContain('fx_tool_cancelled');
+});
+
+test('failed SDK and HTTP Jev routes stop FX before replaying same subgoal', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal; let calls = 0;
+  host.act = async () => { calls++; throw Object.assign(new Error('Jev Gateway unavailable after SDK and HTTP attempts.'), { name: 'JevGatewayUnavailableError' }); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Jev Gateway unavailable');
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Jev provider unavailable');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(calls).toBe(1);
+});
+
+test('Jev HTTP request rejection stops FX with the status visible', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal; let calls = 0;
+  host.act = async () => { calls++; throw Object.assign(new Error('Jev Gateway HTTP evaluation rejected request (SDK 500; HTTP 400).'), { name: 'JevGatewayRejectedError' }); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('HTTP 400');
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Jev Gateway rejected');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(result.reply).toContain('HTTP 400');
+  expect(calls).toBe(1);
+});
+
+test('debugger collision stops FX before another browser or model attempt', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal; let calls = 0;
+  host.act = async () => { calls++; throw new Error('Another debugger is already attached to the tab with id: 7.'); };
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Another debugger');
+    await expect(tools[2].execute({ goal: 'Continue' }, { signal })).rejects.toThrow('Browser debugger is already in use');
+  }));
+  expect(result.status).toBe('blocked');
+  expect(result.reply).toContain('Earlier actions may have completed');
+  expect(result.reply).not.toContain('no browser action was completed');
+  expect(calls).toBe(1);
 });
 
 test("stop during an active fx turn returns stopped, not an error", async () => {
@@ -286,12 +525,27 @@ test("two blocked subgoals prevent further browser actions", async () => {
 test("fx continues from navigation into Jev work and final verification", async () => {
   const { calls, host } = fixture();
   const signal = new AbortController().signal;
-  const result = await runFxBrowser("test", [], host, signal, fakeRuntime(async tools => {
+  const result = await runFxBrowser("test", [{ role: 'user', content: 'Open https://example.test and complete form' }], host, signal, fakeRuntime(async tools => {
     await tools[1].execute({ url: "https://example.test", newTab: false }, { signal });
     await tools[2].execute({ goal: "Complete form" }, { signal });
   }));
   expect(calls).toEqual(["navigate", "act", "verify"]);
   expect(result.status).toBe("done");
+});
+
+test('FX rejects guessed URLs and accepts exact observed links', async () => {
+  const { host, calls } = fixture(); const signal = new AbortController().signal;
+  const href = 'https://example.test/article?query=' + 'a'.repeat(350);
+  host.observe = async () => ({ page: { url: 'https://example.test/', elements: [{ id: 'e1', role: 'link', label: 'Article', href, operations: ['CLICK'] }] } });
+  await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const navigate = tools.find(tool => tool.name === 'navigate_browser')!;
+    await expect(navigate.execute({ url: 'https://example.test/guessed', newTab: false }, { signal })).rejects.toThrow('URL was not supplied');
+    const observed = await tools.find(tool => tool.name === 'observe_browser')!.execute({}, { signal }) as any;
+    expect(observed.page.controls[0].href).toBe(href);
+    await navigate.execute({ url: observed.page.controls[0].href, newTab: false }, { signal });
+  }));
+  expect(calls).toContain('navigate');
+  expect(calls.filter(call => call === 'navigate')).toHaveLength(1);
 });
 
 test("fx cannot report success when final evidence is missing", async () => {
@@ -320,6 +574,94 @@ test("fx retains tool evidence and retries an unverified outcome", async () => {
   }));
   expect(checks).toBe(2);
   expect(result.status).toBe("done");
+});
+
+test('multi-step recovery retains original request and plan without treating plan as evidence', async () => {
+  const { host } = fixture();
+  const signal = new AbortController().signal;
+  const messages = [{ role: 'user' as const, content: 'Find two articles, compare them, then report sources.' }];
+  let turns = 0, checks = 0;
+  host.act = async goal => ({ status: 'checkpoint', reason: goal });
+  host.verify = async (goal, evidence) => {
+    checks++;
+    expect(JSON.parse(goal).messages).toEqual(messages);
+    expect(evidence?.map(item => item.tool)).toEqual(Array(checks).fill('browser_subgoal'));
+    return { satisfied: checks === 2, evidence: checks === 1 ? 'Second article missing' : 'Both articles compared' };
+  };
+  const runtime = { supportsJspi: () => true, createFxAgent: async (options: Parameters<typeof import('libfx/browser').createFxAgent>[0]) => ({
+    prompt: (input: string) => {
+      const turn = ++turns;
+      const request = JSON.parse(input).request;
+      if (turn === 2) {
+        expect(request.originalRequest).toEqual(messages);
+        expect(request.plan).toEqual([
+          { goal: 'Find first article', status: 'done' },
+          { goal: 'Find second article', status: 'pending' },
+          { goal: 'Compare and report sources', status: 'pending' },
+        ]);
+        expect(request.verificationFeedback).toBe('Second article missing');
+      }
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (turn === 1) {
+            const plan = await options.tools.find(tool => tool.name === 'plan_task')!.execute({ milestones: [
+              { goal: 'Find first article', status: 'in_progress' },
+              { goal: 'Find second article', status: 'pending' },
+              { goal: 'Compare and report sources', status: 'pending' },
+            ] }, { signal }) as any;
+            expect(plan.remaining).toBe(3);
+          }
+          await options.tools.find(tool => tool.name === 'browser_subgoal')!.execute({ goal: turn === 1 ? 'Find first article' : 'Find second article' }, { signal });
+          if (turn === 1) await options.tools.find(tool => tool.name === 'plan_task')!.execute({ milestones: [
+            { goal: 'Find first article', status: 'done' },
+            { goal: 'Find second article', status: 'pending' },
+            { goal: 'Compare and report sources', status: 'pending' },
+          ] }, { signal });
+          yield { type: 'text_delta', delta: turn === 1 ? 'First found. ' : 'Comparison ready.' };
+        },
+        result: Promise.resolve({ stopReason: 'end_turn', usage: {} }), cancel() {},
+      };
+    }, close: async () => {},
+  }) };
+  expect((await runFxBrowser('test', messages, host, signal, runtime)).status).toBe('done');
+  expect(turns).toBe(2);
+  expect(checks).toBe(2);
+});
+
+test('read-only multi-step research receives a final check even without page actions', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const messages = [{ role: 'user' as const, content: 'Read both source sections and compare them.' }];
+  let checks = 0;
+  host.readPage = async query => ({ reading: { text: query === 'first' ? 'First source' : 'Second source' } });
+  host.verify = async (goal, evidence) => {
+    checks++;
+    expect(JSON.parse(goal).messages).toEqual(messages);
+    expect(evidence?.map(item => item.tool)).toEqual(['read_page', 'read_page']);
+    return { satisfied: true, evidence: 'Both sections captured' };
+  };
+  const result = await runFxBrowser('test', messages, host, signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'plan_task')!.execute({ milestones: [
+      { goal: 'Read first section', status: 'pending' },
+      { goal: 'Read second section', status: 'pending' },
+      { goal: 'Compare findings', status: 'pending' },
+    ] }, { signal });
+    const read = tools.find(tool => tool.name === 'read_page')!;
+    await read.execute({ query: 'first', offset: 0 }, { signal });
+    await read.execute({ query: 'second', offset: 0 }, { signal });
+  }));
+  expect(result.status).toBe('done');
+  expect(checks).toBe(1);
+});
+
+test('read-only browser evidence cannot mark an unsupported answer done', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  host.readPage = async () => ({ reading: { text: 'Only one source found' } });
+  host.verify = async () => ({ satisfied: false, evidence: 'Second source missing' });
+  const result = await runFxBrowser('test', [{ role: 'user', content: 'Compare two sources' }], host, signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'read_page')!.execute({ query: '', offset: 0 }, { signal });
+  }));
+  expect(result.status).toBe('blocked');
+  expect(result.reply).toContain('Second source missing');
 });
 
 test("fx stops after declined approval without retrying actions", async () => {
@@ -375,6 +717,36 @@ test('tool budget is terminal and skips final verification', async () => {
   expect(calls).not.toContain('verify');
 });
 
+test('three-milestone plan has room for dependent observations past ordinary tool cap', async () => {
+  const { host, calls } = fixture(); const signal = new AbortController().signal;
+  const result = await runFxBrowser('test', [{ role: 'user', content: 'Find, compare, and report three sources.' }], host, signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'plan_task')!.execute({ milestones: [
+      { goal: 'Find sources', status: 'in_progress' },
+      { goal: 'Compare sources', status: 'pending' },
+      { goal: 'Report findings', status: 'pending' },
+    ] }, { signal });
+    for (let i = 0; i < 24; i++) await tools.find(tool => tool.name === 'observe_browser')!.execute({}, { signal });
+    await tools.find(tool => tool.name === 'browser_subgoal')!.execute({ goal: 'Finish comparison' }, { signal });
+  }));
+  expect(result.status).toBe('done');
+  expect(calls.filter(call => call === 'observe')).toHaveLength(24);
+  expect(calls).toContain('verify');
+});
+
+test('two-milestone plan can finish after the ordinary tool cap', async () => {
+  const { host, calls } = fixture(); const signal = new AbortController().signal;
+  const result = await runFxBrowser('test', [{ role: 'user', content: 'Find an article, then post about it.' }], host, signal, fakeRuntime(async tools => {
+    await tools.find(tool => tool.name === 'plan_task')!.execute({ milestones: [
+      { goal: 'Find article', status: 'in_progress' },
+      { goal: 'Post about it', status: 'pending' },
+    ] }, { signal });
+    for (let i = 0; i < 24; i++) await tools.find(tool => tool.name === 'observe_browser')!.execute({}, { signal });
+    await tools.find(tool => tool.name === 'browser_subgoal')!.execute({ goal: 'Post about article' }, { signal });
+  }));
+  expect(result.status).toBe('done');
+  expect(calls).toContain('verify');
+});
+
 test('interleaved successes cannot erase cumulative recovery budget', async () => {
   const { host } = fixture(); const signal = new AbortController().signal; let count = 0;
   host.act = async () => ({ status: ++count % 2 ? 'blocked' : 'done', reason: 'No progress' });
@@ -397,7 +769,7 @@ test('deadline distinguishes timeout from user stop', async () => {
 test('navigation hopping yields current evidence before a third destination', async () => {
   const { host, calls } = fixture(); const signal = new AbortController().signal;
   host.readPage = async () => { calls.push('read'); return { reading: { text: 'Current page' } }; };
-  await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+  await runFxBrowser('test', [{ role: 'user', content: 'Visit https://one.test, https://two.test, then https://three.test' }], host, signal, fakeRuntime(async tools => {
     const navigate = tools.find(t => t.name === 'navigate_browser')!;
     for (const url of ['https://one.test', 'https://two.test']) await navigate.execute({ url, newTab: false }, { signal });
     expect(await navigate.execute({ url: 'https://three.test', newTab: false }, { signal })).toMatchObject({ status: 'checkpoint', pageRead: { reading: { text: 'Current page' } } });
@@ -581,7 +953,9 @@ test('large page previews stay small while final verification retains late contr
   const { host } = fixture(); const signal = new AbortController().signal;
   const elements = Array.from({ length: 2000 }, (_, i) => ({ id: `e${i}`, nodeId: i, role: 'link', label: '長い記事のリンク'.repeat(100), operations: ['CLICK'] }));
   elements.push({ id: 'destination', nodeId: 2001, role: 'textbox', label: 'Destination', operations: ['TYPE_TEXT'], value: 'Oslo', selected: true } as any);
-  host.act = async () => ({ status: 'checkpoint', observation: { tabId: 7, page: { url: 'https://example.test/article', text: 'Article', elements } } });
+  const actions = elements.map(element => ({ id: `observed:${element.id}`, operation: element.operations[0], target: element.id,
+    label: element.label, description: 'Act on observed control', snapshotFingerprint: 'exact-fingerprint' }));
+  host.act = async () => ({ status: 'checkpoint', observation: { tabId: 7, page: { url: 'https://example.test/article', text: 'Article', elements }, actions } });
   host.verify = async (_goal, evidence) => {
     const full = JSON.parse(evidence![0].result);
     expect(full.observation.page.controls).toHaveLength(2001);
@@ -593,7 +967,33 @@ test('large page previews stay small while final verification retains late contr
     expect(new TextEncoder().encode(JSON.stringify(returned)).length).toBeLessThan(16_000);
     expect(returned.observation.page.plannerOmittedControls).toBeGreaterThan(0);
     expect(returned.observation.page.controls).toContainEqual(expect.objectContaining({ id: 'destination', value: 'Oslo' }));
+    expect(returned.observation.actions).toContainEqual(actions.at(-1));
+    expect(returned.observation.actionsOmitted).toBeGreaterThan(0);
+    expect(returned.observation.actionCatalogNotice).toContain('Never invent');
     expect(elements.at(-1)).toHaveProperty('nodeId');
+  }));
+  expect(result.status).toBe('done');
+});
+
+test('planner retains draft content and form identity through bounded previews', async () => {
+  const { host } = fixture(); const signal = new AbortController().signal;
+  const draft = 'Hello '.repeat(220);
+  const context = [{ id: 'conversation', role: 'dialog', label: 'Chat with Alice' }];
+  host.act = async () => ({ status: 'checkpoint', history: [
+    { operation: 'TYPE_TEXT', targetLabel: 'Write a message', text: draft, pageChanged: true },
+  ], observation: { page: { elements: [
+    { id: 'wide', nodeId: 122, role: 'link', label: 'Oversized selected link', href: 'https://example.test/' + 'q'.repeat(9000), selected: true, operations: ['CLICK'] },
+    { id: 'editor', nodeId: 123, role: 'textbox', label: 'Write a message', value: draft, multiline: true, context, operations: ['TYPE_TEXT', 'PRESS_ENTER'] },
+    { id: 'send', nodeId: 124, role: 'button', label: 'Send', context, operations: ['CLICK'] },
+    { id: 'long', nodeId: 125, role: 'textbox', label: 'Other draft', value: 'x'.repeat(5000), valueTruncated: true, valueLength: 7000, operations: ['TYPE_TEXT'] },
+  ] } } });
+  const result = await runFxBrowser('test', [], host, signal, fakeRuntime(async tools => {
+    const returned = await tools.find(t => t.name === 'browser_subgoal')!.execute({ goal: 'Draft greeting without sending' }, { signal }) as any;
+    expect(returned.recentActions[0].text).toBe(draft);
+    const controls = returned.observation.page.controls;
+    expect(controls[0]).toMatchObject({ value: draft, multiline: true, context });
+    expect(controls.find((c: any) => c.id === 'send').context).toEqual(context);
+    expect(controls.find((c: any) => c.id === 'long')).toMatchObject({ valueTruncated: true, valueLength: 7000 });
   }));
   expect(result.status).toBe('done');
 });

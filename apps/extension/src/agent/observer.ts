@@ -58,7 +58,10 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     contexts.set(element, item);
     return item;
   };
-  const diagnostics = { busy: [...root.querySelectorAll('[aria-busy="true"],progress:not([value]),[role="progressbar"]:not([aria-valuenow])')].some(element => visible(element)) || root.getAttribute('aria-busy') === 'true', omittedOffscreenControls: 0, modalScoped: !!dialog, candidates: 0, rejected: {}, iframeCount: document.querySelectorAll('iframe').length };
+  const focused = document.activeElement;
+  const requiresAccessibility = [...root.querySelectorAll('[contenteditable]')].some(element => element.getAttribute('contenteditable') !== 'false' && !element.matches(selector) && visible(element)) ||
+    (focused && root.contains(focused) && focused.hasAttribute('tabindex') && !focused.matches(selector) && visible(focused));
+  const diagnostics = { busy: [...root.querySelectorAll('[aria-busy="true"],progress:not([value]),[role="progressbar"]:not([aria-valuenow])')].some(element => visible(element)) || root.getAttribute('aria-busy') === 'true', omittedOffscreenControls: 0, modalScoped: !!dialog, candidates: 0, rejected: {}, unavailable: {}, iframeCount: document.querySelectorAll('iframe').length, requiresAccessibility };
   const reject = (reason) => { diagnostics.rejected[reason] = (diagnostics.rejected[reason] || 0) + 1; };
   const axRecords = new Map(useAccessibility ? (cache.axRecords || []).map(record => [cache.axNodes.get(record.backendNodeId), record]).filter(([element]) => element?.isConnected) : []);
   const candidates = new Set(useAccessibility ? axRecords.keys() : root.querySelectorAll(selector));
@@ -86,6 +89,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     const ax = axRecords.get(element);
     const reason = availability.get(element) || (ax?.properties.disabled === true ? 'disabled' : null);
     if (reason && (!ax || !['offscreen','occluded','disabled'].includes(reason))) { reject(reason); continue; }
+    if (reason) diagnostics.unavailable[reason] = (diagnostics.unavailable[reason] || 0) + 1;
     const rect = element.getBoundingClientRect(), nodeId = identity(element), id = "e" + (elements.length + 1), elementRole = ax?.role || actionableRole(element);
 
     if (!elementRole) { reject('unsupported-role'); continue; }
@@ -93,7 +97,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     // controls can be recovered by scrolling; report every omitted row.
     if (reason === 'offscreen' && offscreenControls++ >= 250) { diagnostics.omittedOffscreenControls++; continue; }
     const label = (ax?.label || name(element)).replace(/\s+/g, " ").trim().slice(0, 500) || elementRole;
-    const editable = ax?.properties.readonly !== true && !element.readOnly && element.getAttribute("aria-readonly") !== "true" && (["textbox", "searchbox", "spinbutton"].includes(elementRole) || (elementRole === "combobox" && element.tagName === "INPUT"));
+    const editable = ax?.properties.readonly !== true && !element.readOnly && element.getAttribute("aria-readonly") !== "true" && (["textbox", "searchbox", "spinbutton"].includes(elementRole) || (elementRole === "combobox" && ["INPUT", "TEXTAREA"].includes(element.tagName)));
     const downloadable = element.tagName === "A" && (element.hasAttribute("download") || /\.(pdf|zip|csv|json|xlsx?|docx?|pptx?)(?:$|\?)/i.test(element.href));
     const operations = downloadable ? ["DOWNLOAD"] : element.tagName === "SELECT" ? ["SELECT"] : editable ? ["TYPE_TEXT", "CLICK", "PRESS_ENTER", "PRESS_ESCAPE"] : ["CLICK"];
     operations.push('HOVER', 'RIGHT_CLICK');
@@ -110,6 +114,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
     }
     if (reason) operations.length = 0;
     const item = { id, nodeId, role: elementRole, label, operations };
+    if (element.tagName === 'A' && element.href) item.href = element.href;
     if (reason) item.availability = reason;
     if (editable) item.multiline = element.tagName === 'TEXTAREA' || element.getAttribute('aria-multiline') === 'true';
     const context = [];
@@ -160,7 +165,7 @@ export const OBSERVER_EXPRESSION = String.raw`(() => {
       }
     }
     elements.push(item);
-    if (!reason) guards[id] = { nodeId, role: actionableRole(element) || 'unknown', label: name(element).replace(/\s+/g,' ').trim().slice(0,500) || actionableRole(element) || 'unknown', value: item.value, enabled: true,
+    if (!reason) guards[id] = { nodeId, role: actionableRole(element) || 'unknown', label: name(element).replace(/\s+/g,' ').trim().slice(0,500) || actionableRole(element) || 'unknown', value: item.value, ...(item.href ? { href: item.href } : {}), enabled: true,
       ...(ax ? { accessibility: { backendNodeId: ax.backendNodeId, role: ax.axRole, name: ax.label } } : {}),
       rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height } };
   }
@@ -190,9 +195,44 @@ export function observationExpression(accessibility: boolean) {
   return OBSERVER_EXPRESSION.replace('const useAccessibility = false;', `const useAccessibility = ${accessibility};`);
 }
 
+function domControlsComplete(page: Pick<PageSnapshot, 'diagnostics' | 'elements'>): boolean {
+  return !page.diagnostics?.requiresAccessibility && page.elements.every(element =>
+    !element.operations.length || (element.label.trim().length > 0 && element.label !== element.role));
+}
+
+function domMatchesAccessibility(ax: PageSnapshot, dom: RawSnapshot): boolean {
+  if (ax.pageIdentity !== dom.pageIdentity || ax.url !== dom.url || !domControlsComplete(dom)) return false;
+  const domControls = new Map(dom.elements.filter(element => element.operations.length).map(element => [element.nodeId, element]));
+  // An empty loading page says nothing about controls that appear later.
+  if (!domControls.size) return false;
+  if (ax.elements.filter(element => element.operations.length).length !== domControls.size) return false;
+  for (const element of ax.elements) {
+    if (!element.operations.length) continue;
+    const match = domControls.get(element.nodeId);
+    if (!match || match.role !== element.role || match.label !== element.label) return false;
+    const contextMeaning = (value: typeof element.context) => value?.map(({ role, label, heading }) => ({ role, label, heading })) ?? [];
+    if (JSON.stringify(contextMeaning(element.context)) !== JSON.stringify(contextMeaning(match.context))) return false;
+    const axOnly = element.operations.filter(operation => !match.operations.includes(operation));
+    // AX exposes Enter for native buttons/links. Their DOM click remains an
+    // equivalent executable route, so this extra shortcut need not force AX.
+    if (axOnly.some(operation => operation !== 'PRESS_ENTER' || !['button', 'link'].includes(element.role) || !match.operations.includes('CLICK'))) return false;
+  }
+  const visibleText = dom.text.replace(/\s+/g, ' ');
+  return ax.text.split('\n').map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).every(line => visibleText.includes(line));
+}
+
+function sameActionableControls(before: PageSnapshot, after: PageSnapshot): boolean {
+  const original = new Map(before.elements.filter(element => element.operations.length).map(element => [element.nodeId, element]));
+  const current = after.elements.filter(element => element.operations.length);
+  return original.size === current.length && current.every(element => {
+    const prior = original.get(element.nodeId);
+    return prior?.role === element.role && prior.label === element.label;
+  });
+}
+
 export class CdpObserver {
   private accessibility: AccessibilitySource;
-  private settlingBaseline?: { snapshotId: string; page: PageSnapshot };
+  private settlingBaseline?: { snapshotId: string; page: PageSnapshot; fastDom: boolean };
   constructor(
     private readonly api: ChromeDebuggerApi,
     private readonly target: Debuggee,
@@ -237,7 +277,18 @@ export class CdpObserver {
     }
     // Poll snapshots never become decision input. Refresh AX and guards once,
     // after settling, preserving custom controls and accessible names.
-    return useDomPolls && !stopped() ? this.observe() : latest;
+    if (useDomPolls && !stopped()) {
+      const fastDom = this.settlingBaseline?.snapshotId === before.snapshotId && this.settlingBaseline.fastDom;
+      if (fastDom && latest !== before && latest.pageIdentity === before.pageIdentity && latest.url === before.url &&
+          latest.diagnostics?.modalScoped === before.diagnostics?.modalScoped &&
+          sameActionableControls(before, latest) && domControlsComplete(latest)) {
+        if (latest.diagnostics) latest.diagnostics.source = 'dom-fast';
+        this.settlingBaseline = { snapshotId: latest.snapshotId, page: { ...latest }, fastDom: true };
+        return latest;
+      }
+      return this.observe();
+    }
+    return latest;
   }
   private snapshot(raw: RawSnapshot): PageSnapshot {
     const fingerprint = snapshotFingerprint(raw);
@@ -254,7 +305,7 @@ export class CdpObserver {
         if (accessibility.source === 'accessibility') {
           const dom = await evaluate<RawSnapshot | null>(this.api, this.target, observationExpression(false)).catch(() => null);
           if (dom && dom.pageIdentity === raw.pageIdentity && dom.url === raw.url) {
-            this.settlingBaseline = { snapshotId: snapshot.snapshotId, page: this.snapshot(dom) };
+            this.settlingBaseline = { snapshotId: snapshot.snapshotId, page: this.snapshot(dom), fastDom: domMatchesAccessibility(snapshot, dom) };
           }
         }
         return snapshot;

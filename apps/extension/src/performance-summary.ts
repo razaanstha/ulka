@@ -1,6 +1,6 @@
 import type { LogEntry } from './diagnostics';
 
-// Numeric, allowlisted metrics only: never expose prompts, page data or provider errors.
+// Numeric metrics and allowlisted names only: never expose prompts, page data, or provider messages.
 export function performanceSummary(events: LogEntry[]) {
   const runs = new Map<string, LogEntry[]>();
   for (const entry of events) {
@@ -16,7 +16,10 @@ export function performanceSummary(events: LogEntry[]) {
     const stages = run.flatMap<Record<string, string | number | boolean | undefined>>(entry => {
       const d = data(entry);
       if (entry.event === 'fx_turn_end') return [{ stage: 'planner turn', ms: number(d.elapsedMs), toolsMs: number(d.toolsMs), outsideToolsMs: number(d.outsideToolsMs), reasoningChars: number(d.reasoningChars) }];
-      if (entry.event === 'fx_tool_end') return [{ stage: ['observe_browser', 'read_page', 'browser_subgoal', 'navigate_browser', 'native_tabs', 'ask_user', 'webmcp_call', 'list_downloads'].includes(d.name) ? d.name : 'tool', ms: number(d.elapsedMs), previewBytes: number(d.plannerResultBytes) }];
+      if (entry.event === 'fx_tool_end') return [{ stage: ['observe_browser', 'read_page', 'browser_subgoal', 'navigate_browser', 'search_web', 'native_tabs', 'ask_user', 'webmcp_call', 'list_downloads'].includes(d.name) ? d.name : 'tool', ms: number(d.elapsedMs), previewBytes: number(d.plannerResultBytes) }];
+      if (entry.event === 'fx_tool_error') return [{ stage: 'tool error', tool: typeof d.name === 'string' && /^[a-z_]{1,40}$/.test(d.name) ? d.name : 'unknown',
+        errorName: typeof d.error?.name === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(d.error.name) ? d.error.name : undefined,
+        consecutiveErrors: number(d.consecutiveToolErrors), ms: number(d.elapsedMs) }];
       if (entry.event === 'verification_start') return [{ stage: 'verification input', inputChars: number(d.inputChars), rawInputChars: number(d.rawInputChars), evidenceCount: number(d.evidenceCount) }];
       if (entry.event === 'fx_final_verification') return [{ stage: 'final verification', ms: number(d.elapsedMs), satisfied: d.satisfied === true }];
       if (entry.event === 'text_model_end' || entry.event === 'text_model_error') return [{ stage: entry.event, ms: number(d.elapsedMs) }];

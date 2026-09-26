@@ -7,6 +7,7 @@ test('performance view separates overlapping timings and excludes private payloa
   const summary = performanceSummary([
     entry('request', 0, { kind: 'CHAT', content: 'secret prompt' }), entry('fx_start', 1),
     entry('fx_tool_end', 400, { name: 'read_page', elapsedMs: 100, plannerResultBytes: 2500, text: 'secret page' }),
+    entry('fx_tool_error', 450, { name: 'navigate_browser', error: { name: 'ZodError', message: 'secret validation' }, consecutiveToolErrors: 2, elapsedMs: 5 }),
     entry('fx_turn_end', 900, { elapsedMs: 850, toolsMs: 100, outsideToolsMs: 750, reasoningChars: 8000, reply: 'secret answer' }),
     entry('verification_start', 910, { inputChars: 12000, rawInputChars: 80000, evidenceCount: 3 }),
     entry('fx_final_verification', 1100, { elapsedMs: 200, satisfied: true, evidence: 'secret evidence' }),
@@ -16,6 +17,7 @@ test('performance view separates overlapping timings and excludes private payloa
   expect(summary).toHaveLength(1);
   expect(summary[0]).toMatchObject({ totalMs: 1150, status: 'done', completeEnvelope: true });
   expect(summary[0]!.stages).toContainEqual({ stage: 'planner turn', ms: 850, toolsMs: 100, outsideToolsMs: 750, reasoningChars: 8000 });
+  expect(summary[0]!.stages).toContainEqual({ stage: 'tool error', tool: 'navigate_browser', errorName: 'ZodError', consecutiveErrors: 2, ms: 5 });
   expect(JSON.stringify(summary)).not.toContain('secret');
 });
 test('partial diagnostic buffers never invent end-to-end timings', () => {

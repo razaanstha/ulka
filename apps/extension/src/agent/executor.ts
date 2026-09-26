@@ -67,8 +67,12 @@ export class BrowserExecutor {
       const focused = await evaluate<boolean>(this.api, this.target, `(() => { const e=window.__ulkaAgent?.nodes.get(${guard.nodeId}); if (!e?.isConnected) return false; if (e.ownerDocument.activeElement!==e) e.focus({preventScroll:true}); return e.ownerDocument.activeElement===e; })()`);
       if (!focused) throw new StaleDecisionError('Control could not receive keyboard focus');
       const key = decision.operation === 'ARROW_DOWN' ? 'ArrowDown' : decision.operation === 'ARROW_UP' ? 'ArrowUp' : decision.operation === 'PRESS_ENTER' ? 'Enter' : 'Escape';
-      await this.api.sendCommand(this.target, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key });
-      await this.api.sendCommand(this.target, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key }); return;
+      const windowsVirtualKeyCode = { ArrowDown: 40, ArrowUp: 38, Enter: 13, Escape: 27 }[key];
+      // DOM key alone leaves legacy keyCode at zero and omits Enter's char
+      // event, breaking native form submission and common keyboard handlers.
+      await this.api.sendCommand(this.target, 'Input.dispatchKeyEvent', { type: 'keyDown', key, code: key, windowsVirtualKeyCode,
+        ...(key === 'Enter' ? { text: '\r', unmodifiedText: '\r' } : {}) });
+      await this.api.sendCommand(this.target, 'Input.dispatchKeyEvent', { type: 'keyUp', key, code: key, windowsVirtualKeyCode }); return;
     }
     if (decision.operation === "SELECT") {
       const option = Number(decision.option);

@@ -13,7 +13,6 @@ export interface CachedAction {
   label: string;
   ordinal: number;
   precondition: string;
-  cachedAt: number;
 }
 
 // Only actions with a stable, observable result are replayable. Text input and
@@ -41,7 +40,6 @@ function semanticTarget(page: PageSnapshot, decision: Pick<AgentDecision, "targe
     label: target.label,
     ordinal: targetOrdinal(page, target.id, target.role, target.label),
     precondition: progressState(page),
-    cachedAt: Date.now(),
   };
 }
 
@@ -50,7 +48,7 @@ export function cacheKey(action: Pick<CachedAction, "goalKey" | "url" | "operati
 }
 
 export function rememberAction(cache: Map<string, CachedAction>, goal: string, page: PageSnapshot, decision: AgentDecision, record: ActionRecord): void {
-  if (!CACHEABLE.includes(decision.operation) || decision.operation === "TYPE_TEXT" || record.pageChanged !== true) return;
+  if (!CACHEABLE.includes(decision.operation) || record.pageChanged !== true) return;
   const target = semanticTarget(page, decision);
   if (!target) return;
   const action: CachedAction = { ...target, goalKey: goalKey(goal), operation: decision.operation, option: decision.option };

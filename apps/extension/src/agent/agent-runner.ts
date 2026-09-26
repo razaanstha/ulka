@@ -62,6 +62,7 @@ export class AgentRunner {
       if (budget) budget.remainingModelSteps--;
     };
     let nextSnapshot: PageSnapshot | undefined;
+    const matchingTextActions = new Set<string>();
     let generatedTextCache: { key: string; text: string } | undefined;
     let staleAttempts = 0;
     let failedVerifications = 0;
@@ -75,23 +76,26 @@ export class AgentRunner {
     try {
       while (!this.stopped) {
         if (!budget && this.history.length >= maxActions) return this.blocked("Agent step limit reached.");
-        const modelLimit = claimModelStep();
-        if (modelLimit) return modelLimit;
         this.states.transition("OBSERVING");
         // Consume the settled observation once; stale retries and failed verification re-observe.
         const snapshot = nextSnapshot ?? await this.observer.observe();
         nextSnapshot = undefined;
         this.trace("observe", { url: snapshot.url, title: snapshot.title, elements: snapshot.elements.length, fingerprint: snapshot.fingerprint, snapshotId: snapshot.snapshotId, diagnostics: snapshot.diagnostics });
         this.states.transition("DECIDING");
-        const exhaustedActions = [...memory.attempts].filter(([key, count]) => key.startsWith("progress:") && count >= 2).map(([key]) => key);
+        const exhaustedActions = [...matchingTextActions, ...[...memory.attempts].filter(([key, count]) => key.startsWith("progress:") && count >= 2).map(([key]) => key)];
         // Cache replay is limited to a fresh run. This prevents one run from
         // replaying its own successful click while preserving cross-subgoal speedups.
         const cached = this.history.length === 0 && !feedback ? findCachedAction(actionCache, goal, snapshot) : undefined;
         const forced = this.history.length === 0 && !feedback ? this.options.initialDecision : undefined;
-        calls += cached || forced ? 0 : 1;
+        if (!forced && !cached) {
+          const modelLimit = claimModelStep();
+          if (modelLimit) return modelLimit;
+        }
         const decision = forced ?? cached ?? await this.decisions.decide(goal, snapshot, memory.history.slice(-10), exhaustedActions.length ? { ...feedback, exhaustedActions } : feedback);
         if (this.stopped) return this.stoppedResult();
-        this.trace("decision", { operation: decision.operation, target: decision.target, confidence: decision.confidence, probabilities: decision.operationProbabilities, latencyMs: decision.latencyMs, cacheHit: Boolean(cached), observedAction: Boolean(forced) });
+        this.trace("decision", { operation: decision.operation, target: decision.target, confidence: decision.confidence, probabilities: decision.operationProbabilities, latencyMs: decision.latencyMs, cacheHit: Boolean(cached), observedAction: Boolean(forced),
+          ...(decision.operation === 'BLOCKED' ? { availableTargets: Object.fromEntries([...new Set(snapshot.elements.flatMap(element => element.operations))].map(operation =>
+            [operation, snapshot.elements.filter(element => element.operations.includes(operation)).length])) } : {}) });
         if (decision.operation === "DONE") {
           if (this.options.completionMode === 'subgoal' && !requiresSubgoalVerification) {
             this.states.transition('CHECKPOINT');
@@ -111,7 +115,7 @@ export class AgentRunner {
           }
           this.states.transition("DONE"); return { status: "done", history: this.history };
         }
-        if (decision.operation === "BLOCKED") return this.blocked("Jev found no supported action.");
+        if (decision.operation === "BLOCKED") return this.blocked("Jev chose BLOCKED from the observed state.");
         // At the action budget, allow DONE above but never another mutation or text call.
         if (budget && budget.remainingActions <= 0) return this.budgetExhausted('action');
         if (this.history.length >= maxActions) return this.blocked('Agent step limit reached.');
@@ -131,11 +135,10 @@ export class AgentRunner {
         const progressKey = progressActionKey(snapshot, decision);
         if (!progressKey && hasActionCycle([...memory.history, { step: 0, operation: decision.operation, targetLabel: semanticLabel, url: snapshot.url, executedAt: Date.now() }])) return this.blocked('Repeated action cycle detected despite page changes. Choose a different strategy.');
         if (targeted && (!target || !target.operations.includes(decision.operation))) throw new Error("Decision target is invalid; no action executed.");
-        if (progressKey && (memory.attempts.get(progressKey) ?? 0) >= 2) return this.blocked("Repeated action in the same meaningful page state. Inspect current controls or choose a different action; navigation does not reset this checkpoint.");
+        if (progressKey && (matchingTextActions.has(progressKey) || (memory.attempts.get(progressKey) ?? 0) >= 2)) return this.blocked("Repeated action in the same meaningful page state. Inspect current controls or choose a different action; navigation does not reset this checkpoint.");
         const attemptKey = JSON.stringify([snapshot.url, snapshot.fingerprint, decision.operation, target?.role, target?.label, decision.option]);
         const attempts = memory.attempts.get(attemptKey) ?? 0;
         if (attempts >= 3) return this.blocked("Repeated action in a previously visited page state. Choose a different strategy; do not repeat this action.");
-        memory.attempts.set(attemptKey, attempts + 1);
         let text: string | undefined;
         if (decision.operation === "TYPE_TEXT") {
           if (!target || !this.textEngine) throw new Error("Text generator unavailable");
@@ -156,6 +159,18 @@ export class AgentRunner {
             generatedTextCache = { key, text };
           }
           this.trace("text", { target: target.id, label: target.label, text });
+          // Replacing an already matching complete value cannot advance a task.
+          // Keep this exclusion local to this goal so a later edit remains possible.
+          if (!target.valueTruncated && target.value !== undefined && target.value === text) {
+            const evidence = 'Observed field value already matches generated text. No replacement was executed. Inspect the value and choose any required suggestion, commit or submission control, or finish if the goal is satisfied.';
+            if (this.options.completionMode === 'subgoal' && !requiresSubgoalVerification) {
+              this.states.transition('CHECKPOINT');
+              return { status: 'checkpoint', reason: `${evidence} Outcome remains unverified; final task verification is required.`, history: this.history };
+            }
+            if (progressKey) matchingTextActions.add(progressKey);
+            feedback = { evidence, excludeDone: false };
+            continue;
+          }
         }
         const risk = classifyAction(snapshot, decision);
         if (risk === "blocked") return this.blocked("Action blocked by approval policy.");
@@ -164,6 +179,7 @@ export class AgentRunner {
         this.states.transition("VALIDATING");
         try {
           this.states.transition("EXECUTING");
+          memory.attempts.set(attemptKey, attempts + 1);
           // Count attempts too: an executor can change focus before reporting a stale target.
           if (budget) budget.remainingActions--;
           await this.executor.execute(snapshot, decision, text);
@@ -172,6 +188,7 @@ export class AgentRunner {
         } catch (error) {
           if (error instanceof StaleDecisionError) {
             this.trace("stale", { message: error.message });
+            if (forced) return this.blocked(`Observed action could not be replayed: ${error.message}. Observe again before choosing another action.`);
             // A trigger may open a popup and transfer focus before any text is
             // inserted. Re-observe and tell the model why the previous target
             // failed rather than silently choosing the same trigger again.
@@ -186,7 +203,6 @@ export class AgentRunner {
         if (progressKey) memory.attempts.set(progressKey, (memory.attempts.get(progressKey) ?? 0) + 1);
         this.history.push(record);
         memory.history.push(record);
-        rememberAction(actionCache, goal, snapshot, decision, record);
         if (feedback) feedback.excludeDone = false;
         if (memory.history.length > 30) memory.history.shift();
         staleAttempts = 0;
@@ -201,6 +217,7 @@ export class AgentRunner {
         if (this.stopped) return this.stoppedResult();
         nextSnapshot = after;
         record.pageChanged = progressState(after) !== progressState(snapshot);
+        rememberAction(actionCache, goal, snapshot, decision, record);
         this.trace("action_progress", { operation: decision.operation, target: decision.target, pageChanged: record.pageChanged, rawPageChanged: after.fingerprint !== snapshot.fingerprint });
         if (this.options.completionMode === 'subgoal' && after.url !== snapshot.url) {
           // A new document/search is a planning boundary, not proof of success.
@@ -231,6 +248,25 @@ export class AgentRunner {
           const visits = (stateVisits.get(key) ?? 0) + 1;
           stateVisits.set(key, visits);
           if (visits >= 3) return this.blocked('Repeated page-state cycle across subgoals. The same observed state returned three times; inspect missing information or change strategy instead of repeating this interaction.');
+        }
+        if (decision.operation === 'TYPE_TEXT' && this.options.completionMode === 'subgoal' && !requiresSubgoalVerification) {
+          // Text entry is a planning boundary. Hand the actual settled value to
+          // FX before another replacement or a dependent submit/send action.
+          this.states.transition('CHECKPOINT');
+          return { status: 'checkpoint', reason: 'Text entry was dispatched. Inspect the observed field value and any suggestions before choosing a commit or submission action. Outcome remains unverified; final task verification is required.', history: this.history };
+        }
+        if (forced && this.options.completionMode === 'subgoal') {
+          // Replay promises one observed action, not an open-ended model loop.
+          // FX inspects the settled observation and verifies the overall task.
+          this.states.transition('CHECKPOINT');
+          return { status: 'checkpoint', reason: 'One observed action was dispatched. Outcome remains unverified. Inspect the current controls before any further action; final task verification is required.', history: this.history };
+        }
+        if (decision.operation === 'PRESS_ESCAPE' && this.options.completionMode === 'subgoal') {
+          // Dismissal can leave persistent accessibility hints behind. Return
+          // fresh evidence to the planner instead of repeatedly dismissing a
+          // popup that may already be closed. Shared cycle limits still apply.
+          this.states.transition('CHECKPOINT');
+          return { status: 'checkpoint', reason: 'Escape was dispatched; dismissal remains unverified. Inspect the current controls and resume the original task if the obstruction cleared. Do not repeat Escape based only on persistent popup instructions.', history: this.history };
         }
       }
       return this.stoppedResult();

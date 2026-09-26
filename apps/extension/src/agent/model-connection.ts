@@ -1,12 +1,16 @@
 import { textPlanSchema, textDateSchema, textReviewSchema } from './text-generator';
 import { verificationSchema } from './outcome-verifier';
-import { createGateway, Output } from 'ai';
+import { createGateway, experimental_evaluate as evaluate, Output } from 'ai';
 import { z } from 'zod';
 import { sanitize } from '../diagnostics';
 import { LANGUAGE_MODEL, TEXT_MODEL } from './models';
 import { generateStructuredText, structuredFailureDetails } from './structured-generation';
+import { withGatewayPolicy } from './gateway-policy';
 
 type Transport = (url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => Promise<Response>;
+const jevState = { page: { url: 'https://example.test', title: 'Synthetic model check', text: 'Ulka QA ready' }, elements: [] };
+const jevQuestions = { operation: { type: 'choice' as const, criteria: { DONE: 'Synthetic goal is already satisfied.', BLOCKED: 'Synthetic goal is not satisfied.' },
+  instructions: { goal: 'Confirm that Ulka QA is ready.', rules: 'Choose DONE only when page text states Ulka QA ready.' } } };
 export interface ModelConnectionResult {
   check: string; model: string; status: 'passed' | 'failed'; elapsedMs: number;
   transport: Record<string, unknown>; error?: unknown;
@@ -14,10 +18,10 @@ export interface ModelConnectionResult {
 
 // Synthetic requests only. Never attach a browser, read a page, or replay actions.
 export async function testModelConnection(apiKey: string, transport: Transport = fetch, timeoutMs = 10_000): Promise<ModelConnectionResult[]> {
-  const checks = ['fx_style_headers', 'sdk_plain', 'sdk_schema', 'sdk_verifier', 'sdk_text_generation', 'sdk_text_date', 'sdk_text_review'] as const;
+  const checks = ['fx_style_headers', 'sdk_plain', 'sdk_schema', 'sdk_verifier', 'sdk_text_generation', 'sdk_text_date', 'sdk_text_review', 'sdk_jev', 'http_jev'] as const;
   return Promise.all(checks.map(async check => {
     const started = performance.now();
-    const model = check.startsWith('sdk_text_') ? TEXT_MODEL : LANGUAGE_MODEL;
+    const model = check.endsWith('_jev') ? 'typesafe-ai/jev' : check.startsWith('sdk_text_') ? TEXT_MODEL : LANGUAGE_MODEL;
     const schema: z.ZodType = check === 'sdk_text_generation' ? textPlanSchema : check === 'sdk_text_date' ? textDateSchema
       : check === 'sdk_text_review' ? textReviewSchema : check === 'sdk_verifier' ? verificationSchema : z.object({ ok: z.literal(true) });
     const expected = check === 'sdk_text_generation' ? { suitable: true, reason: 'Synthetic name field', text: 'Ulka QA' }
@@ -68,6 +72,28 @@ export async function testModelConnection(apiKey: string, transport: Transport =
     };
     const gateway = createGateway({ apiKey, fetch: Object.assign(request, { preconnect: fetch.preconnect }) });
     try {
+      if (check === 'http_jev') {
+        const response = await Promise.race([request('https://ai-gateway.vercel.sh/v1/evaluate', {
+          method: 'POST', signal: controller.signal,
+          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ model, state: jevState, questions: jevQuestions, providerOptions: withGatewayPolicy() }),
+        }), timeout]);
+        if (!response.ok) throw new Error(`Jev HTTP evaluation returned ${response.status}.`);
+        const result = await Promise.race([response.json(), timeout]);
+        if (result?.answers?.operation?.type !== 'choice' || result.answers.operation.choice !== 'DONE') {
+          throw new Error('Synthetic Jev HTTP decision did not choose DONE.');
+        }
+        return { check, model, status: 'passed', elapsedMs: performance.now() - started, transport: details };
+      }
+      if (check === 'sdk_jev') {
+        const result = await Promise.race([evaluate({
+          model: gateway.evaluation(model), abortSignal: controller.signal, maxRetries: 0,
+          providerOptions: withGatewayPolicy(),
+          state: jevState, questions: jevQuestions,
+        }), timeout]);
+        if (result.answers.operation.choice !== 'DONE') throw new Error('Synthetic Jev decision did not choose DONE.');
+        return { check, model, status: 'passed', elapsedMs: performance.now() - started, transport: details };
+      }
       const result = await Promise.race([generateStructuredText({
         model: gateway(model), abortSignal: controller.signal, maxRetries: 0, maxOutputTokens: 1_200,
         prompt: `Synthetic contract check only. Return exactly this object: ${JSON.stringify(expected)}`,

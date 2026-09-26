@@ -1,5 +1,15 @@
 # Browser runtime evaluations
 
+## Sidepanel UI and streaming performance
+
+After `bun run build`, run `python3 scripts/eval/check-panel.py`. This optional check requires Python's `playwright` package and installed Google Chrome. It launches isolated headless Chrome, serves the built panel through intercepted requests, and simulates extension storage and messages without keys or model calls.
+
+The browser checks keyboard focus, a 400-chunk streaming burst, complete output, reading-position preservation, Stop with partial output, completion before a queued paint, saved history, narrow layout, and uncaught page errors. The burst must render once while preserving 20,400 visible characters. Timing is reported, not asserted, because hardware and browser scheduling vary. These numbers measure UI work, not model or end-to-end task latency.
+
+To compare builds, save the old `apps/extension/dist/sidepanel.js` outside `dist` before rebuilding, then pass `--baseline-bundle /path/to/old-sidepanel.js`. Use `--screenshot /tmp/ulka-panel.png` to capture the verified result. The baseline bundle must match the current HTML structure.
+
+## Browser actions
+
 Run `python3 scripts/eval/check_environment.py` from the repository root. Requires Bun and Chrome; `BROWSER_BINARY` can select another Chromium executable.
 
 The checks launch an isolated temporary browser profile and exercise Ulka's production observer, freshness validator, and executor on synthetic pages. Five task families cover duplicate-label controls, field entry, native selects, checkboxes, and delayed editors. Known wrong actions and false completion claims must not pass the page-state checks.

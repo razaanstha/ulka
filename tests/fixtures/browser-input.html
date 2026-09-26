@@ -1,0 +1,10 @@
+<!doctype html><meta charset="utf-8"><title>Ulka input check</title>
+<h1>Browser input checks</h1>
+<p><a href="#arrived" id="link">Open destination</a></p>
+<form id="form"><label>Search <input id="query" autocomplete="off"></label><button>Submit search</button></form>
+<p id="outcome">No submission</p><pre id="events"></pre>
+<script>
+const rows=[]; const output=document.querySelector('#events');
+for(const type of ['pointerdown','mousedown','pointerup','mouseup','click','keydown','keypress','keyup']) document.addEventListener(type,event=>{if(event.target.closest('form,a')) { rows.push(JSON.stringify({type,target:event.target.id,key:event.key,keyCode:event.keyCode,button:event.button,buttons:event.buttons,trusted:event.isTrusted,detail:event.detail})); output.textContent=rows.slice(-16).join('\n'); }},true);
+document.querySelector('form').addEventListener('submit',event=>{event.preventDefault();document.querySelector('#outcome').textContent='Submitted: '+document.querySelector('#query').value});
+</script>

@@ -221,6 +221,9 @@ body #settings { position: absolute; top: calc(100% - 2px); right: 14px; z-index
 .settings-key-row input { flex: 1; width: 0; }
 #settings button { font-size: 11px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; }
 #settings #save-key { background: var(--action); color: var(--on-action); flex-shrink: 0; }
+#settings #personalization { min-height: 96px; max-height: 220px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); font-size: 12px; line-height: 1.5; }
+#settings #personalization:focus-visible { outline: 2px solid #66957d; outline-offset: 2px; }
+#settings #save-personalization { flex-shrink: 0; align-self: flex-start; background: var(--action); color: var(--on-action); }
 .settings-key-note { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 #settings .hint { font-size: 10px; line-height: 1.5; margin: 7px 0 0; color: var(--muted); }
 #settings .settings-section { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 12px; }

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import { CdpObserver } from '../apps/extension/src/agent/observer';
 import { FreshnessValidator } from '../apps/extension/src/agent/freshness';
 import { BrowserExecutor } from '../apps/extension/src/agent/executor';
+import { AgentRunner } from '../apps/extension/src/agent/agent-runner';
 const profile = await mkdtemp(join(tmpdir(), 'ulka-ax-smoke-'));
 const browser = Bun.spawn([process.env.BROWSER_BINARY || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '--headless=new', '--no-first-run', '--no-default-browser-check', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdout: 'ignore', stderr: 'ignore' });
 let ws: WebSocket | undefined;
@@ -30,7 +31,11 @@ try {
     if (ready.result?.value) break;
     await Bun.sleep(100);
   }
-  const api = { attach: async () => {}, detach: async () => {}, sendCommand: (_: unknown, method: string, params?: Record<string, unknown>) => command(method, params, sessionId) };
+  let axReads = 0;
+  const api = { attach: async () => {}, detach: async () => {}, sendCommand: (_: unknown, method: string, params?: Record<string, unknown>) => {
+    if (method === 'Accessibility.getFullAXTree') axReads++;
+    return command(method, params, sessionId);
+  } };
   const target = { tabId: 1 };
   const observer = new CdpObserver(api, target);
   const before = await observer.observe();
@@ -52,6 +57,26 @@ try {
   await executor.execute(after, { operation: 'TYPE_TEXT', target: editor.id, confidence: 1 }, 'Local test draft');
   const typed = await observer.observe();
   assert.equal(typed.elements.find(e => e.label === 'Write a message')?.value, 'Local test draft');
+  // Reproduce repeated message replacement through the real browser pipeline.
+  // No provider requests or real messages are needed for this control-loop test.
+  const draft = 'A complete local greeting. '.repeat(45);
+  let draftDecisions = 0, draftWrites = 0;
+  const draftRunner = () => new AgentRunner(observer, {
+    decide: async (_goal, page) => {
+      draftDecisions++;
+      return { operation: 'TYPE_TEXT', target: page.elements.find(e => e.label === 'Write a message')!.id, confidence: 1 };
+    },
+  }, { execute: async (page, decision, text) => { draftWrites++; await executor.execute(page, decision, text); } } as BrowserExecutor,
+  undefined, { completionMode: 'subgoal' }, { generate: async () => draft });
+  const drafted = await draftRunner().run('Draft a greeting without sending');
+  assert.equal(drafted.status, 'checkpoint', 'Successful typing must hand off before repeated replacement');
+  assert.equal(draftDecisions, 1);
+  assert.equal(draftWrites, 1);
+  assert.equal((await observer.observe()).elements.find(e => e.label === 'Write a message')?.value, draft);
+  const matching = await draftRunner().run('Keep the existing greeting without sending');
+  assert.equal(matching.status, 'checkpoint');
+  assert.equal(matching.history.length, 0, 'Matching value is evidence, not a new execution');
+  assert.equal(draftWrites, 1, 'Matching complete value must not be inserted again');
   await command('Runtime.evaluate', { expression: `document.body.innerHTML = '<div role="dialog" aria-label="Messaging" style="position:fixed;bottom:0;left:20px;width:320px;height:32px;overflow:hidden"><header tabindex="0" style="height:32px">Raju Shrestha</header><div contenteditable="true" role="textbox" aria-label="Write a message" style="height:100px">draft</div></div>'; document.querySelector('header').onclick=()=>document.querySelector('[role=dialog]').style.height='180px';` }, sessionId);
   const minimized = await observer.observe();
   const opener = minimized.elements.find(e => e.label === 'Raju Shrestha');
@@ -106,7 +131,19 @@ try {
   await assert.rejects(() => executor.execute(redirected, { operation: 'TYPE_TEXT', target: departure.id, confidence: 1 }, 'October 5'), /focus|changed/i);
   const afterRedirect = await command('Runtime.evaluate', { expression: `Array.from(document.querySelectorAll('input'),e=>e.value)`, returnByValue: true }, sessionId);
   assert.deepEqual(afterRedirect.result.value, ['', ''], 'Typing must not leak into redirected field');
-  console.log('PASS: real AX observation, delayed chat opening, disabled Send context, fresh DOM targeting, rich-text typing, minimized-chat recovery, iframe discovery/typing/focus, hidden and covered iframe rejection, shadow editor typing and overlay rejection');
+  await command('Runtime.evaluate', { expression: `document.body.innerHTML = '<button id="increment">Increment</button><span id="count">0</span>'; document.getElementById('increment').onclick=()=>{const count=document.getElementById('count');count.textContent=String(Number(count.textContent)+1)};` }, sessionId);
+  const simple = await observer.observe();
+  const axReadsBeforeFastActions = axReads;
+  await executor.execute(simple, { operation: 'CLICK', target: simple.elements.find(e => e.label === 'Increment')!.id, confidence: 1 });
+  const fast = await observer.waitForChange(simple);
+  assert.equal(fast.diagnostics?.source, 'dom-fast', 'Matching simple controls should skip the second AX scan');
+  assert(fast.text.includes('1'), 'Fast DOM result must include new page state');
+  await executor.execute(fast, { operation: 'CLICK', target: fast.elements.find(e => e.label === 'Increment')!.id, confidence: 1 });
+  const fastAgain = await observer.waitForChange(fast);
+  assert.equal(fastAgain.diagnostics?.source, 'dom-fast', 'A second matching action should keep the fast DOM path');
+  assert(fastAgain.text.includes('2'), 'Second fast DOM result must include new page state');
+  assert.equal(axReads, axReadsBeforeFastActions, 'Stable controls should require no further AX tree reads');
+  console.log('PASS: real AX observation, fast DOM settling, delayed chat opening, disabled Send context, fresh DOM targeting, rich-text typing, minimized-chat recovery, iframe discovery/typing/focus, hidden and covered iframe rejection, shadow editor typing and overlay rejection');
 } finally {
   ws?.close();
   browser.kill();
