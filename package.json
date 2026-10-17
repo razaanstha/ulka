@@ -14,14 +14,14 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@types/bun": "1.4.2",
+    "@types/bun": "1.4.3",
     "happy-dom": "^20.14.5",
     "typescript": "^5.9.2"
   },
   "dependencies": {
-    "ai": "^7.0.116",
+    "ai": "^7.0.140",
     "libfx": "0.0.10",
-    "marked": "^18.0.14",
-    "zod": "^4.6.5"
+    "marked": "^18.1.1",
+    "zod": "^4.6.7"
   }
 }
