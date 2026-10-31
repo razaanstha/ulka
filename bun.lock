@@ -6,7 +6,7 @@
       "name": "ulka",
       "dependencies": {
         "ai": "^7.0.116",
-        "libfx": "0.0.10",
+        "libfx": "0.0.15",
         "marked": "^18.0.14",
         "zod": "^4.6.5",
       },
@@ -65,7 +65,7 @@
 
     "json-schema": ["json-schema@0.4.0", "", {}, "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="],
 
-    "libfx": ["libfx@0.0.10", "", {}, "sha512-rkslSgwmmeTghQkJYYeFBIn6VRnSMZsPC6eNB86PVtkzOLLjYAr9KY3xBAq8aUdr0YcD2SgLqOojpH3vLC4xtw=="],
+    "libfx": ["libfx@0.0.15", "", {}, "sha512-/m0eeTxPYvuPMG7afKn65kwryfkCehGkwvyEh6LCVBXzNSTSdYIO9o0y0FluzPUgt15xVneMdMiViko4spMP0A=="],
 
     "marked": ["marked@18.0.14", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-mBHK6FBHuBAlhgRe88w9F0O1AbwwXJUcQibUbC/QcdTbVGAD7aWza+xt3N6oT/jCZx3/OMeS+8rnuiHZcQ9s7A=="],
 
