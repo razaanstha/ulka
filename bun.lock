@@ -6,7 +6,7 @@
       "name": "ulka",
       "dependencies": {
         "ai": "^7.0.116",
-        "libfx": "0.0.10",
+        "libfx": "0.0.16",
         "marked": "^18.0.14",
         "zod": "^4.6.5",
       },
@@ -32,6 +32,14 @@
     "@ai-sdk/provider": ["@ai-sdk/provider@4.0.18", "", { "dependencies": { "json-schema": "^0.4.0" } }, "sha512-+GZJIgz1jk86pwEbb3f1BD2bdoSKyWE4Jg4YUc7NMnMozbWemSKYZcw2F4nMaO5qwsL5A8RmioAKW81YktRpIQ=="],
 
     "@ai-sdk/provider-utils": ["@ai-sdk/provider-utils@5.0.49", "", { "dependencies": { "@ai-sdk/provider": "4.0.18", "@standard-schema/spec": "^1.1.0", "@workflow/serde": "4.1.0", "eventsource-parser": "^3.0.8", "undici": "^7.29.0" }, "peerDependencies": { "zod": "^3.25.76 || ^4.1.8" } }, "sha512-T+/H8DCvqJoCqLhltVatS7ffA779Iyk/ZZrgNXkrgv51E0n2Cd6eIdCmtwhCGIKqtbTtwCvTmQdAMv5Z8rOGHQ=="],
+
+    "@libfx/libfx-darwin-arm64": ["@libfx/libfx-darwin-arm64@0.0.16", "", { "os": "darwin", "cpu": "arm64" }, "sha512-u4kmCFbVpOE9JdMDCi04c7LeOH6uKIJKpkDUxq1RyhW81Rx4MiI/5XtSXw702WIbxX57R5csOFvOp8uPDwzTEQ=="],
+
+    "@libfx/libfx-darwin-x64": ["@libfx/libfx-darwin-x64@0.0.16", "", { "os": "darwin", "cpu": "x64" }, "sha512-LsbtrtH+Qnk4hCOw03SvYxNlyBtU+aIGr2CHjsogbNI2lfN4QZLp5eP3l84EFouVAgJzwFrMzJGlUGmyIc/zkw=="],
+
+    "@libfx/libfx-linux-arm64-gnu": ["@libfx/libfx-linux-arm64-gnu@0.0.16", "", { "os": "linux", "cpu": "arm64" }, "sha512-8OeEF5y9mzGcG4eLmCYbaVO5jnVMF9GTdTLpu3ftSixhlt/nvxNjMJl6/+TGzHSQtUewNxR6aM820Hl4NW2PIw=="],
+
+    "@libfx/libfx-linux-x64-gnu": ["@libfx/libfx-linux-x64-gnu@0.0.16", "", { "os": "linux", "cpu": "x64" }, "sha512-JAz5lUwGTTVqmVDT6p0a2o4m7lOFBPU+i3sYYYw3r+FQUPY+cV0r/AnXY40edA1ICf00EHlH9Okna5gWBr/Zyg=="],
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
@@ -65,7 +73,7 @@
 
     "json-schema": ["json-schema@0.4.0", "", {}, "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA=="],
 
-    "libfx": ["libfx@0.0.10", "", {}, "sha512-rkslSgwmmeTghQkJYYeFBIn6VRnSMZsPC6eNB86PVtkzOLLjYAr9KY3xBAq8aUdr0YcD2SgLqOojpH3vLC4xtw=="],
+    "libfx": ["libfx@0.0.16", "", { "optionalDependencies": { "@libfx/libfx-darwin-arm64": "0.0.16", "@libfx/libfx-darwin-x64": "0.0.16", "@libfx/libfx-linux-arm64-gnu": "0.0.16", "@libfx/libfx-linux-x64-gnu": "0.0.16" } }, "sha512-qA/b37rsJ8DNJXkg1+iyQCmzBbiXO+2lCXtdZzP6GjVPcStJEb3QkmhXEpOURb+VCfNc7L9gB6TiTXeS3/CPXQ=="],
 
     "marked": ["marked@18.0.14", "", { "bin": { "marked": "bin/marked.js" } }, "sha512-mBHK6FBHuBAlhgRe88w9F0O1AbwwXJUcQibUbC/QcdTbVGAD7aWza+xt3N6oT/jCZx3/OMeS+8rnuiHZcQ9s7A=="],
 
